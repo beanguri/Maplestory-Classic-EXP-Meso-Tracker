@@ -34,6 +34,9 @@ class Capture:
     def end_look(self):
         """Called after the look, whatever happened."""
 
+    def window_at(self, handle, rect):
+        """Called in a look once the reader knows the game window (its handle) and where it is on screen."""
+
 
 class ScreenCapture(Capture):
     """A copy of the screen (mss): shows whatever is on top, so this app's own window is in the way."""
@@ -44,6 +47,51 @@ class ScreenCapture(Capture):
 
     def grab(self, left, top, width, height):
         return grab(self.sct, left, top, width, height)
+
+
+class WindowCapture(ScreenCapture):
+    """The game window pictured alone (platform.capture_window; macOS), so nothing on top of it, this app's
+    window included, is in the way. Each picture costs about the same whatever its size, so it's taken once per
+    look, the whole window, and every part inside it is cut from that. A part reaching outside the window, or a
+    look whose picture failed, is a screen copy as before: then this app's window does cover the game."""
+
+    def __init__(self, sct, platform, own_rect):
+        super().__init__(sct)
+        self.platform, self.own_rect = platform, own_rect     # own_rect(): this app's window on screen, or None
+        self.whole = self.rect = None
+
+    @property
+    def name(self):
+        return "window" if self.whole is not None else "screen"
+
+    @property
+    def sees_through_windows(self):
+        return self.whole is not None
+
+    def begin_look(self):
+        self.whole = self.rect = None
+
+    def window_at(self, handle, rect):
+        self.whole = self.platform.capture_window(handle, *rect) if handle and rect else None
+        self.rect = rect if self.whole is not None else None
+
+    def grab(self, left, top, width, height):
+        if self.whole is not None:
+            x, y, w, h = self.rect
+            if x <= left and y <= top and left + width <= x + w and top + height <= y + h:
+                part = self.whole[top - y:top - y + height, left - x:left - x + width, :3]
+                return np.ascontiguousarray(part), left, top
+        shot = super().grab(left, top, width, height)
+        r = self.own_rect() if self.whole is not None else None   # (a screen copy in a see-through look: the
+        if shot and r:                                            # reader won't hide this app's window from it)
+            img, sx, sy = shot
+            x0, y0 = max(0, r[0] - sx), max(0, r[1] - sy)
+            x1, y1 = min(img.shape[1], r[0] + r[2] - sx), min(img.shape[0], r[1] + r[3] - sy)
+            if x0 < x1 and y0 < y1:
+                img = img.copy()
+                img[y0:y1, x0:x1] = 0
+            shot = img, sx, sy
+        return shot
 
 
 def as_capture(source):

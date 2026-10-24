@@ -49,7 +49,7 @@ import mss
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-from capture import ScreenCapture, as_capture, grab  # noqa: F401
+from capture import ScreenCapture, WindowCapture, as_capture, grab  # noqa: F401
 import digits_v2
 import exp_font
 import healthlog
@@ -2058,6 +2058,8 @@ class ScreenReader:
             self._forget_places()
         rect = self._game_rect()
         self.last_rect = rect
+        if self.mode == "window":
+            capture.window_at(self.hwnd, rect)          # (a capture that pictures the game window alone takes it here)
         if self.mode == "region":
             reading = self._read_region(capture, rect)
         elif not self.hwnd and PLATFORM.missing_permission():
@@ -2072,6 +2074,9 @@ class ScreenReader:
                 monitors = getattr(getattr(capture, "sct", None), "monitors", None) or []
                 if bottom_off_screen(rect, [(m["left"], m["top"], m["width"], m["height"]) for m in monitors[1:]]):
                     reading = reading._replace(where=OFF_SCREEN_TEXT)
+            if reading.exp_kind in ("not_found", "covered") and reading.where != OFF_SCREEN_TEXT and PLATFORM.missing_permission():
+                # (Nexon's Mac app is found by its program name, which needs no permission: the picture is then empty)
+                reading = reading._replace(where=PLATFORM.missing_permission())
         if reading.percent_only and self.mode == "region":
             # (a selected area has no game window around it: no badge to find, so typing the level in is open at once)
             self.level_failures = max(self.level_failures, LEVEL_FAILS_FOR_FALLBACK)
@@ -5509,7 +5514,8 @@ class App:
         while not self.stop_evt.is_set():
             try:
                 with mss.mss() as sct:
-                    capture = ScreenCapture(sct)
+                    capture = (WindowCapture(sct, PLATFORM, lambda: self.reader.own_rect)
+                               if PLATFORM.captures_window_alone else ScreenCapture(sct))
                     opened = time.monotonic()
                     # (opened again every SCREEN_LIST_SECONDS: mss keeps the list of screens it first saw, so a monitor
                     # plugged in or out, or a new resolution, would leave the game "off screen" until a restart)
