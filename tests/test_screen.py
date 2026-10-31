@@ -1502,6 +1502,38 @@ for f in sorted(FRAMES.glob("exp_*.png")):
 check("a blank picture has no bar", m.find_exp_v2(np.full((200, 1000, 3), 40, np.uint8)) is None)
 check("noise has no bar", m.find_exp_v2(np.random.default_rng(3).integers(0, 255, (200, 1000, 3), dtype=np.uint8)) is None)
 
+# ---- finder v2 with the game's filter on (F04): the digit next to "[" sits closer once the picture is sharpened
+import digits_v2  # noqa: E402
+import types  # noqa: E402
+vfeet = np.zeros((20, 30), np.uint8)
+vfeet[5:15, 10] = 60                                   # a "[": a dim thin stroke on its left, a short foot at the top and at the bottom
+vfeet[5, 10:12] = vfeet[14, 10:12] = 60
+stroke = m.Blob(0, 10, 5, 3, 10)
+check("a bracket alone has feet, whatever is looked at around it",
+      m._v2_has_feet(vfeet, stroke) and m._v2_has_feet(vfeet, stroke, m.V2_SIDE_FILTERED))
+vfeet[6:14, 14] = 255                                  # the stroke of the next digit, one px of gap away
+check("a digit that close fills the middle in the 2 px look (Default, as before): no feet",
+      not m._v2_has_feet(vfeet, stroke) and m.V2_SIDE == 2)
+check("...and not in the filtered 1 px look: the feet are seen", m._v2_has_feet(vfeet, stroke, m.V2_SIDE_FILTERED))
+crop = cv2.imread(str(FRAMES / "filtered_exp-1920x1080.png"))      # real filtered bar, 1920x1080: "EXP. 14,503 [6.03%]" (the "[" sits right before a 6)
+check("the real filtered bar is not found in the Default look (the bug)", crop is not None and m.find_exp_v2(crop) is None)
+f_lay = m.find_exp_v2(crop, filtered=True)
+check("...and is found and read with the filter on, 14,503 [6.03%]",
+      f_lay is not None and digits_v2.read_layout_v2(exp_font.load(), f_lay) == (14503, 6.03))
+check("...today's reader reads it too (no change there)", m.find_exp(crop) is not None
+      and m.read_layout(TPL, m.find_exp(crop)) == (14503, 6.03))
+for f in sorted(FRAMES.glob("exp_*.png")):
+    bar = cv2.imread(str(f))
+    check(f"filtered=True finds the Default bar too, same place, {f.stem[4:]}",
+          m.find_exp_v2(bar, filtered=True) is not None and m.find_exp_v2(bar) is not None
+          and m.find_exp_v2(bar, filtered=True).box == m.find_exp_v2(bar).box)
+r_f = m.ScreenReader(TPL)
+check("the reader's finder follows `filtered`: off = the Default look, on = the filtered look",
+      r_f.filtered is False and r_f._find_exp_v2(crop) is None)
+r_f._filter = types.SimpleNamespace(filtered=True)
+check("...on: it finds the bar", r_f._find_exp_v2(crop) is not None)
+check("the EXP shadow uses that finder", r_f.shadow.find.__func__ is m.ScreenReader._find_exp_v2)
+
 # ---- digit reader v2: draws the game's own font at the screen's scale and compares pixels
 import digits_v2  # noqa: E402
 
