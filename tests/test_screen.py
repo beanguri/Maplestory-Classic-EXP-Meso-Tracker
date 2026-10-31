@@ -242,6 +242,44 @@ for name, info in sorted(PARTS["inventory"].items()):
     check(f"a trade window's covered mesos box is found and the offer boxes aren't, EXP digits {gh:.0f} px",
           found is not None and found[0] + found[2] == bx + bw and found[1] == by)
 
+# ---- the mesos digits are learned (into the data folder, used on Default screens too) only while the filter is sure to be off
+for name, info in sorted(PARTS["inventory"].items()):
+    inv, gh, (bx, by, bw, bh) = cv2.imread(str(FRAMES / name)), info["gh"], info["box"]
+    h, w = inv.shape[:2]
+    scene = np.full((h + 40, w + 40, 3), 25, np.uint8)
+    scene[:h, :w] = inv
+    size = f"EXP digits {gh:.0f} px"
+    learned_for = {}
+    for state in ("off", "no_effect", "on", "unknown"):
+        reader = m.ScreenReader(m.DigitTemplates.load())
+        reader.gh = gh
+        reader._filter.state = state
+        digits = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz")
+        digits.examples = {k: v[:-1] for k, v in digits.examples.items()}            # one short of full: room to learn
+        reader.mesos_digits = digits
+        got = reader._read_mesos(FakeScreen(scene), bx, by, bw, bh)[0]
+        learned_for[state] = sum(len(v) for v in digits.examples.values()) - 10 * (m.MesosDigits.PER_DIGIT - 1)
+        check(f"the mesos read does not depend on the filter state ({state}), {size}", got == info["mesos"])
+    check(f"mesos digits are learned while the filter is off or has no effect, {size}", learned_for["off"] > 0 and learned_for["no_effect"] > 0)
+    check(f"...and not while it is on or not known yet, {size}", learned_for["on"] == 0 and learned_for["unknown"] == 0)
+    # still learning the font (a digit missing): Tesseract + the EXP digits agree, the same rule
+    for state, want in (("off", True), ("on", False), ("unknown", False)):
+        reader = m.ScreenReader(m.DigitTemplates.load())
+        reader.gh = gh
+        reader._filter.state = state
+        digits = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz")
+        digits.examples.pop("7", None)
+        before = {k: len(v) for k, v in digits.examples.items()}
+        reader.mesos_digits = digits
+        real_tess = m.tesseract_mesos
+        m.tesseract_mesos = lambda lay, value=info["mesos"]: (value, 6)
+        try:
+            reader._read_mesos(FakeScreen(scene), bx, by, bw, bh)
+        finally:
+            m.tesseract_mesos = real_tess
+        grew = any(len(v) > before.get(k, 0) for k, v in digits.examples.items())
+        check(f"while the mesos font is still being learned, digits are learned only when the filter is off ({state}), {size}", grew == want)
+
 # ---- the potion bar: drawn with simple icons and the game's count glyphs, at several sizes and both UI sizes
 import potions  # noqa: E402
 import potion_bar  # noqa: E402

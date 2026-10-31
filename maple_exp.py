@@ -2724,6 +2724,12 @@ class ScreenReader:
             return None
         return field if read_mesos_positions(img, field, templates) else None
 
+    def _learn_mesos_ok(self):
+        """May the mesos digits of this look be learned (into DATA_DIR/mesos_digits.npz, used on Default screens too)?
+        Only when the game's filter is sure to be off ("off", or "no_effect": the UI is drawn 1:1). While it is on, or
+        not known yet at an enlarged size, the digits are sharpened and would spoil the Default ones."""
+        return self.filter_state in (filter_ui.OFF, filter_ui.NO_EFFECT)
+
     def _read_mesos(self, capture, x, y, w, h):
         """Reads the mesos box at (x, y, w, h) on screen. Returns (number, image, boxes)."""
         capture = self.capture = as_capture(capture)
@@ -2758,7 +2764,7 @@ class ScreenReader:
                 if self.mesos_pending[1] < 3:
                     return None, img, boxes_of(lay)
             self.mesos_count, self.mesos_pending = len(str(value)), (None, 0)
-            if solid and score >= 0.95 and lead >= 0.15:
+            if solid and score >= 0.95 and lead >= 0.15 and self._learn_mesos_ok():
                 learned.learn(lay, value)             # more examples, from very clean looks
             return value, img, boxes_of(lay)
         # Still learning the mesos font: a new number needs Tesseract's OK. On a solid box
@@ -2780,7 +2786,7 @@ class ScreenReader:
         if checked is None or (not solid and checked != value):
             return None, img, boxes
         self.mesos_checked = checked
-        if checked == value or votes == 6:            # two readers agree: learn these digits
+        if (checked == value or votes == 6) and self._learn_mesos_ok():     # two readers agree: learn these digits
             learned.learn(lay, checked)
         return checked, img, boxes
 
