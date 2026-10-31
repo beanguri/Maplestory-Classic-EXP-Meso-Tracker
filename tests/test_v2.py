@@ -683,5 +683,53 @@ check("party v3: unreadable with no party count before: None, 'unclear', not a g
 check("party v3: after a count of 1 (alone) no list stays 1",
       read3(nolist, 1.0, p3.PartyLook(1, "ok", None, None, 0)) == p3.PartyLook(1, "ok", None, None, 0))
 
+
+# ---- "Default Ratio (Filter Applied)" (0.9.16, F06): the game sharpens the picture and raises its contrast: the pure
+# black frame and white rim stay 0 and 255, a blended pixel is pushed away from the middle. `filtered=True` (the
+# overlay passes ScreenReader.filtered) lets a blend go that way and nothing else; Default is untouched.
+def sharpened(img, scale, sigma=0.5, amount=1.3):
+    """An unsharp mask like the game's filter (fitted on real pairs: blur 0.5-0.6 x UI scale, amount 1.0-1.3)."""
+    f = img.astype(np.float32)
+    return np.clip(f + amount * (f - cv2.GaussianBlur(f, (0, 0), sigma * scale)), 0, 255).astype(np.uint8)
+
+
+px = np.array([[100, 100, 100]], np.uint8)
+check("party shapes: filtered lets a dark blend go darker and a light blend lighter, never the other way",
+      psh.deviation(px, np.array([127.0]), True)[0] == 0 and psh.deviation(px, np.array([20.0]), True)[0] == 80
+      and psh.deviation(np.array([[250, 250, 250]], np.uint8), np.array([200.0]), True)[0] == 0
+      and psh.deviation(np.array([[150, 150, 150]], np.uint8), np.array([200.0]), True)[0] == 50
+      and psh.deviation(px, np.array([20.0]), False)[0] == 80 and psh.deviation(px, np.array([127.0]), False)[0] == 27)
+rngf = np.random.default_rng(23)
+good = total = unclear = 0
+bad_f, bad_off, bad_def = [], [], []
+for scale, kernel in ((1.40625, "bilinear"), (1.5625, "bilinear"), (1.875, "bilinear"), (2.8125, "bilinear"), (3.75, "bilinear")):
+    for bg in (200, 235, 20, "busy"):
+        for n in (2, 3, 4, 5, 6):
+            img, _ = fake_party(scale, kernel, n, bg, ph=(float(rngf.random()), float(rngf.random())))
+            shown = sharpened(img, scale, *((0.5, 1.3), (0.6, 1.1))[n % 2])
+            got = p3.read_party_v3(shown, ("default", scale), None, None, True)
+            total += 1
+            good += got.count == n
+            unclear += got.count is None
+            if got.count not in (n, None):
+                bad_f.append((scale, bg, n, got.count))
+            # a Default picture read in the filtered way (the detector saying "on" by mistake)
+            c = p3.read_party_v3(img, ("default", scale), None, None, True).count
+            if c not in (n, None):
+                bad_def.append((scale, bg, n, c))
+check(f"party v3 filtered: a sharpened list is never counted wrong at 1.41x to 3.75x ({good} right, {unclear} unclear of {total}) {bad_f[:3] or ''}",
+      not bad_f)
+check(f"party v3 filtered: and most are counted ({good}/{total}); every one from 1.875x up",
+      good >= 0.6 * total)
+hi = [(s, bg, n) for s in (1.875, 2.8125, 3.75) for bg in (200, 235, 20) for n in (2, 4, 6)]
+miss = [t for t in hi if p3.read_party_v3(sharpened(fake_party(t[0], "bilinear", t[2], t[1], ph=(0.3, 0.7))[0], t[0]), ("default", t[0]), None, None, True).count != t[2]]
+check(f"party v3 filtered: lists of 2, 4 and 6 over light and dark are counted exactly at 1.875x, 2.8125x and 3.75x ({miss[:3] or 'all'})", not miss)
+check(f"party v3 filtered: a Default picture read the filtered way is never a wrong number ({bad_def[:3] or 'none wrong'})", not bad_def)
+img, _ = fake_party(1.875, "bilinear", 4, 200, ph=(0.3, 0.7))
+check("party v3: filtered=False is the old code (same answers as with no argument)",
+      p3.read_party_v3(img, ("default", 1.875)) == p3.read_party_v3(img, ("default", 1.875), None, None, False))
+alone = np.full((1080, 1920, 3), 150, np.uint8)
+check("party v3 filtered: no list on screen is still solo", p3.read_party_v3(sharpened(alone, 1.406), None, None, None, True).count == 1)
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)

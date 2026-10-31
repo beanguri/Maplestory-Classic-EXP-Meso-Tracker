@@ -18,6 +18,12 @@ A screen pixel is "trusted" when it is made almost wholly of frame or rim at thi
 share of it at least TRUST): where the frame meets the rim it is a smoothed mix of both and its value is known
 exactly; where it meets the outside or the fill it is not trusted and left out, so is the whole blurred ring.
 
+Under the game's "Default Ratio (Filter Applied)" the picture is sharpened and its contrast raised: the pure frame
+and rim pixels stay exactly 0 and 255, but the blended ones (where the frame meets the rim, at a UI scale that is not
+a whole step) are pushed away from the middle: a dark blend gets darker, a light blend lighter, by up to 60 grey
+levels at 5K. `agree(..., filtered=True)` therefore lets a blend go that way freely and keeps the same TOL
+the other way (real filtered bars at 1.41, 1.88 and 3.75 then agree on 96% or more of their trusted pixels).
+
 Pure numpy: no screen, no files except the asset.
 """
 import json
@@ -109,16 +115,27 @@ def frame(scale, kernel, qx, qy):
     return got
 
 
-def agree(real, ox, oy, scale, kernel):
+def deviation(px, expect, filtered=False):
+    """How far each picture pixel (rows of BGR) is off the drawing's value `expect` (one per row): the largest
+    channel difference. With `filtered` only a difference toward the middle counts (a value expected dark may be
+    darker, one expected light may be lighter: the filter's contrast)."""
+    e = expect[:, None]
+    px = px.astype(np.float32)
+    if filtered:
+        return np.where(e <= (DARK + LIGHT) / 2, np.maximum(px - e, 0), np.maximum(e - px, 0)).max(axis=1)
+    return np.abs(px - e).max(axis=1)
+
+
+def agree(real, ox, oy, scale, kernel, filtered=False):
     """How well the frame drawn with its top left design pixel at (ox, oy) in `real` (BGR) explains it, over the
     trusted pixels: (pixels that agree, pixels judged, mean error), None when the drawing leaves the picture.
-    A pixel agrees when no channel is further off than TOL."""
+    A pixel agrees when no channel is further off than TOL (`filtered`: see deviation)."""
     fx, fy = math.floor(ox), math.floor(oy)
     fr, off = frame(scale, kernel, int(round((ox - fx) * Q)), int(round((oy - fy) * Q)))
     x, y = fx - off, fy - off
     if x < 0 or y < 0 or y + fr.h > real.shape[0] or x + fr.w > real.shape[1]:
         return None
-    d = np.abs(real[y + fr.ys, x + fr.xs].astype(np.float32) - fr.expect[:, None]).max(axis=1)
+    d = deviation(real[y + fr.ys, x + fr.xs], fr.expect, filtered)
     return int((d <= TOL).sum()), len(fr.ys), float(np.minimum(d, 120).mean())
 
 

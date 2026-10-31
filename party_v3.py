@@ -22,6 +22,9 @@ How it reads a look:
     list at all, until there have been HOLD_LOOKS of those in a row (then you are on your own: 1). The state
     travels in `last` (the previous PartyLook); this module keeps nothing.
 
+Under the game's "Default Ratio (Filter Applied)" (`filtered=True`, from ScreenReader.filtered) the same drawing is
+used but a blended frame pixel may be darker / lighter than drawn (party_shapes.deviation); Default is unchanged.
+
 Pure: gets a picture, returns an answer. Keeps nothing, and the picture isn't kept.
 """
 import math
@@ -187,7 +190,7 @@ def _spots(runs, val, s):
 
 
 # ---------------------------------------------------------------- exact check
-def _search(img, x, y, s, kernel, xs, ys, early=0.0):
+def _search(img, x, y, s, kernel, xs, ys, early=0.0, filtered=False):
     """Best (agree, judged, ox, oy, mean error) of the drawing placed at x + dx, y + dy for dx in xs, dy in ys. The
     best is the one with the smallest mean error (a share can sit at 1.0 over a wide span of positions where the
     frame is thin); y first (it decides most), then x, then y again at the better x (the two lean on each other)."""
@@ -196,35 +199,35 @@ def _search(img, x, y, s, kernel, xs, ys, early=0.0):
     def better(a):
         return a and a[1] and (top is None or a[2] < top[4])
     for dy in ys:
-        a = party_shapes.agree(img, x, y + dy, s, kernel)
+        a = party_shapes.agree(img, x, y + dy, s, kernel, filtered)
         if better(a):
             top = (a[0], a[1], x, y + dy, a[2])
     if top is None or top[0] < early * top[1]:
         return None
     y = top[3]
     for dx in xs:
-        a = party_shapes.agree(img, x + dx, y, s, kernel)
+        a = party_shapes.agree(img, x + dx, y, s, kernel, filtered)
         if better(a):
             top = (a[0], a[1], x + dx, y, a[2])
     x, y = top[2], top[3]
     for dy in ys[abs(ys) <= 0.26]:                               # y again, near its best, at the better x
         if dy:
-            a = party_shapes.agree(img, x, y + dy, s, kernel)
+            a = party_shapes.agree(img, x, y + dy, s, kernel, filtered)
             if better(a):
                 top = (a[0], a[1], x, y + dy, a[2])
     return top
 
 
-def _fit(img, x, y, s, kernels):
+def _fit(img, x, y, s, kernels, filtered=False):
     """The best drawing of the frame near the estimate (x, y) of a bar's top left screen pixel: coarse then fine.
     -> (agree, judged, ox, oy, kernel) or None."""
     reach = max(1.5, 0.6 * s)
     best = None
     for kernel in kernels:
-        c = _search(img, x, y, s, kernel, np.arange(-reach, reach + 0.01, 0.5), np.arange(-1.0, 1.01, 0.25), 0.3)
+        c = _search(img, x, y, s, kernel, np.arange(-reach, reach + 0.01, 0.5), np.arange(-1.0, 1.01, 0.25), 0.3, filtered)
         if c is None or c[0] < 0.6 * c[1]:
             continue
-        f = _search(img, c[2], c[3], s, kernel, np.arange(-0.25, 0.26, 0.125), np.arange(-0.25, 0.26, 0.125))
+        f = _search(img, c[2], c[3], s, kernel, np.arange(-0.25, 0.26, 0.125), np.arange(-0.25, 0.26, 0.125), filtered=filtered)
         f = f if f and f[4] <= c[4] else c
         if best is None or f[4] < best[5]:
             best = (f[0], f[1], f[2], f[3], kernel, f[4])
@@ -233,9 +236,9 @@ def _fit(img, x, y, s, kernels):
     return best[:5] if best else None
 
 
-def _fit_near(img, ox, oy, s, kernel):
+def _fit_near(img, ox, oy, s, kernel, filtered=False):
     """The same, at a spot known to within 0.25 pixel (a row of a column whose other bars were found)."""
-    r = _search(img, ox, oy, s, kernel, np.arange(-0.25, 0.26, 0.125), np.arange(-0.375, 0.376, 0.125))
+    r = _search(img, ox, oy, s, kernel, np.arange(-0.25, 0.26, 0.125), np.arange(-0.375, 0.376, 0.125), filtered=filtered)
     return r[:4] if r else None
 
 
@@ -269,7 +272,7 @@ def _bar_of(img, r, s):
     return Bar(r[2], r[3], share, r[4])
 
 
-def _find_bars(img, val, runs, s, kernels):
+def _find_bars(img, val, runs, s, kernels, filtered=False):
     """Every bar of this scale that the frame drawing explains: [Bar], and how many near misses (a bar-like spot
     that agrees at least SHARE_LIKE but not SHARE_OK), or None when the picture is too busy to check them all."""
     spots = _spots(runs, val, s)
@@ -285,11 +288,11 @@ def _find_bars(img, val, runs, s, kernels):
         if ref is not None and abs(ref.ox - x) <= 2 + s:
             k = round((y - ref.oy) / pitch)
             if k and abs(y - ref.oy - k * pitch) <= 1.5 + s:
-                r = _fit_near(img, ref.ox, ref.oy + k * pitch, s, ref.kernel)
+                r = _fit_near(img, ref.ox, ref.oy + k * pitch, s, ref.kernel, filtered)
                 if r:
                     r = (r[0], r[1], r[2], r[3], ref.kernel)
         if r is None:
-            r = _fit(img, x, y, s, kernels)
+            r = _fit(img, x, y, s, kernels, filtered)
         b = _bar_of(img, r, s)
         if b is None:
             continue
@@ -386,7 +389,7 @@ def _box(rows, s):
             int(round(last.oy + 15 * s - top)))
 
 
-def _extend(img, rows, s):
+def _extend(img, rows, s, filtered=False):
     """Look where the column's other rows would be (one row above the first, one below the last, and any gap) with
     the exact check, so a bar the first pass missed is still counted and a row that is half there is not skipped.
     -> (rows re-numbered from 0, number of spots that match partly: a row half hidden, a look-alike)."""
@@ -396,7 +399,7 @@ def _extend(img, rows, s):
 
     def probe(k):
         if k not in cache:
-            r = _fit_near(img, ref.ox, ref.oy + k * pitch, s, kernel)
+            r = _fit_near(img, ref.ox, ref.oy + k * pitch, s, kernel, filtered)
             cache[k] = _bar_of(img, r + (kernel,) if r else None, s)
         return cache[k]
     rows = dict(rows)
@@ -414,13 +417,13 @@ def _extend(img, rows, s):
     return {k - lo: b for k, b in rows.items()}, near
 
 
-def _read_column(img, val, bars, near, s):
+def _read_column(img, val, bars, near, s, filtered=False):
     """What a set of bars at scale s says: (count, box) when a whole list is seen, ("unclear", box) when something
     list-like is there but can't be trusted."""
     rows, stray = _column(bars, s)
     if not rows:
         return "unclear", None
-    rows, more = _extend(img, rows, s)
+    rows, more = _extend(img, rows, s, filtered)
     box = _box(rows, s)
     n = max(rows) + 1
     if stray or near or more or len(rows) != n or n > MAX_MEMBERS or n < 2:
@@ -433,7 +436,7 @@ def _read_column(img, val, bars, near, s):
     return n, box
 
 
-def _agree_inside(img, ox, oy, s, kernel):
+def _agree_inside(img, ox, oy, s, kernel, filtered=False):
     """party_shapes.agree for a drawing that may leave the picture: (agree, judged, all) over the trusted pixels that
     are inside it (all = the drawing's trusted pixels)."""
     fx, fy = math.floor(ox), math.floor(oy)
@@ -442,23 +445,23 @@ def _agree_inside(img, ox, oy, s, kernel):
     inside = (ys >= 0) & (xs >= 0) & (ys < img.shape[0]) & (xs < img.shape[1])
     if not inside.any():
         return 0, 0, len(fr.ys)
-    d = np.abs(img[ys[inside], xs[inside]].astype(np.float32) - fr.expect[inside][:, None]).max(axis=1)
+    d = party_shapes.deviation(img[ys[inside], xs[inside]], fr.expect[inside], filtered)
     return int((d <= party_shapes.TOL).sum()), int(inside.sum()), len(fr.ys)
 
 
-def _cut_bar_at(img, x, y, s, kernels):
+def _cut_bar_at(img, x, y, s, kernels, filtered=False):
     """Does the frame drawn near (x, y) (a bar's top left, maybe off the picture) explain the part of it that is in
     the picture: at least SHARE_OK of those trusted pixels, and that part at least CUT_SHOWN of the whole frame?"""
     for kernel in kernels:
         for dy in np.arange(-1.0, 1.01, 0.25):
             for dx in np.arange(-1.5 * s, 1.5 * s + 0.01, 0.25):
-                a, judged, total = _agree_inside(img, x + dx, y + dy, s, kernel)
+                a, judged, total = _agree_inside(img, x + dx, y + dy, s, kernel, filtered)
                 if judged >= CUT_SHOWN * total and a >= SHARE_OK * judged:
                     return True
     return False
 
 
-def _cut_by_side(img, val, s, kernels):
+def _cut_by_side(img, val, s, kernels, filtered=False):
     """Is a bar cut by the picture's left or right side (the list dragged partly off the window), or so close to it
     that the exact check can't draw it? Looks only at the two side strips: a bar's top edge over its rim running
     into the side (or ending just short of it), at least CUT_MIN design pixels of it, the
@@ -481,7 +484,7 @@ def _cut_by_side(img, val, s, kernels):
                 continue
             if (strip[y0:y1, a:c].max(axis=0) < _dark_for(s)).any() and _has_bottom(strip, x0, x1, y, s):
                 left = x_off + (x0 - 2 * s if into_right else x1 + 2 * s - 67 * s)
-                if _cut_bar_at(img, left, y + 1 - s, s, kernels):
+                if _cut_bar_at(img, left, y + 1 - s, s, kernels, filtered):
                     return True
     return False
 
@@ -498,7 +501,7 @@ def _region(last, shape):
     return (x0, y0, x1, y1) if x1 - x0 > 70 * s and y1 - y0 > 11 * s else None
 
 
-def _look(img, val, scales, region):
+def _look(img, val, scales, region, filtered=False):
     """The best look in a region (or the whole picture): (answer, box, scale) with answer a count, "unclear" or
     None (nothing list-like). The scales are tried in order; the first that has a bar decides."""
     if region:
@@ -512,28 +515,29 @@ def _look(img, val, scales, region):
             _top_runs(sub, min_len, max(_dark_for(s) for s, _ in scales), min(_bright_for(s) for s, _ in scales))]
     like = None
     for s, kernels in scales:
-        found = _find_bars(img, val, runs, s, kernels)
+        found = _find_bars(img, val, runs, s, kernels, filtered)
         if found[0] is None:
             return "unclear", None, s
         bars, near = found
         if bars:
-            ans, box = _read_column(img, val, bars, near, s)
+            ans, box = _read_column(img, val, bars, near, s, filtered)
             return ans, box, s
         if near and like is None:
             like = s
     weak = next((s for s, _ in scales if WEAK_SCALES[0] <= s < WEAK_SCALES[1]), None)
     if not like and not region:
-        like = next((s for s, kernels in scales if _cut_by_side(img, val, s, kernels)), None)
+        like = next((s for s, kernels in scales if _cut_by_side(img, val, s, kernels, filtered)), None)
     if like or weak:
         return "unclear", None, like or weak                  # something list-like, or a size where "no list" can't be told
     return None, None, None
 
 
-def read_party_v3(img, scale_hint=None, last=None, hsv=None):
+def read_party_v3(img, scale_hint=None, last=None, hsv=None, filtered=False):
     """The party size seen on `img` (the game window, BGR) as a PartyLook.
 
     scale_hint: (mode, scale) from ui_layout.mode_from_gh, or None. last: the previous PartyLook, or None (hand
-    back every answer). hsv: the same picture as HSV, if it's at hand already.
+    back every answer). hsv: the same picture as HSV, if it's at hand already. filtered: the game's "Default Ratio
+    (Filter Applied)" is on (ScreenReader.filtered): see the module doc.
     A whole list read gives its count. Nothing like a list means you're on your own (1), unless you were in a
     party a moment ago: then that count is kept for HOLD_LOOKS looks ("held"). A list that can't be read (covered,
     a row missing, more than six) is None, "unclear", or the held count. Never a guess."""
@@ -543,9 +547,9 @@ def read_party_v3(img, scale_hint=None, last=None, hsv=None):
     prev = last.count if last is not None and last.count and last.count >= 2 else None
     gone = last.gone if last is not None else 0
     region = _region(last, img.shape)
-    ans, box, s = _look(img, val, scales, region) if region else (None, None, None)
+    ans, box, s = _look(img, val, scales, region, filtered) if region else (None, None, None)
     if ans is None:
-        ans, box, s = _look(img, val, scales, None)
+        ans, box, s = _look(img, val, scales, None, filtered)
     if isinstance(ans, int):
         return PartyLook(ans, "ok", s, box, 0)
     scale = s or (last.scale if last is not None else None)

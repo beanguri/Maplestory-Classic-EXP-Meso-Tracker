@@ -2650,7 +2650,7 @@ class ScreenReader:
         for the next one (where the list was, and a party count held while the list is covered or just gone). A held
         count goes to the shadow as unclear: v3 didn't read it this look, so it is never counted as agreeing or not."""
         hint = ui_layout.mode_from_gh(self.gh, wh) if self.gh else None
-        look = self._party_last = self._party_look = party_v3.read_party_v3(img, hint, self._party_last, hsv)
+        look = self._party_last = self._party_look = party_v3.read_party_v3(img, hint, self._party_last, hsv, self.filtered)
         return (None, "unclear") if look.why == "held" else (look.count, look.why)
 
     @staticmethod
