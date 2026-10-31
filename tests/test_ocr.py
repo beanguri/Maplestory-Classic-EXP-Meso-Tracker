@@ -114,11 +114,11 @@ ocr.subprocess.run = real_run
 ocr.subprocess.run = real_run
 
 # ---- with the real Tesseract: one run for many pictures gives the same text as one run each
-tess = m.find_tesseract()
+tess, tess_data = m.locate_tesseract()[:2]                 # (called the way the overlay calls it: with its data folder)
 if not tess:
     print("     (Tesseract isn't installed: the real-Tesseract tests are skipped)")
 else:
-    real = ocr.Tesseract(tess)
+    real = ocr.Tesseract(tess, tessdata=tess_data or None)
     rnd = random.Random(5)
     words = ["Rocky Road II", "Ant Tunnel I", "The Land of Wild Boar II", "Bandit", "Night Lord",
              "Hidden Street <Henesys>", "", "123,456,789", "0", "12", "x"]
