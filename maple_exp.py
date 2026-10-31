@@ -1394,8 +1394,12 @@ def is_town(name):
     return bool(e and e[2])
 
 
-def read_map_name(bgr, gh):
-    """The map name (the lower line of white text) from a shot of the minimap's info box."""
+def read_map_name(bgr, gh, filtered=False):
+    """The map name (the lower line of white text) from a shot of the minimap's info box.
+
+    filtered (the game's "Default Ratio (Filter Applied)" is on): a name that isn't on the game's list is taken only if
+    every try says the same. The filter's sharpening makes Tesseract drop a last "I" or turn "p" and "y" into "n" and "v"
+    in some tries, and a plurality of those is a wrong name (F07)."""
     white = _whiteness(bgr[:, int(0.85 * bgr.shape[0]):])      # skip the map's icon
     _, blobs = _blobs(white > 0.5)
     glyphs = sorted((b for b in blobs if 0.3 * gh <= b.h <= 1.6 * gh and b.w <= 2.5 * gh),
@@ -1415,7 +1419,11 @@ def read_map_name(bgr, gh):
     y0, y1 = max(0, min(b.y for b in ln) - 2), max(b.y + b.h for b in ln) + 2
     votes = _ocr_votes(white[y0:y1, x0:x1], max(b.h for b in ln), None, _clean_map_name)
     name, n = votes.most_common(1)[0] if votes else (None, 0)
-    return snap_map_name(name) if n >= 2 else None
+    if n < 2:
+        return None
+    if filtered and map_list().find(name) is None and n < sum(votes.values()):
+        return None
+    return snap_map_name(name)
 
 
 # --------------------------------------------------------------------------- mesos and party
@@ -2837,7 +2845,7 @@ class ScreenReader:
                         self.map_unread, self.next_map_read = True, 0.0
                     elif self.map_unread and now >= self.next_map_read:
                         with self._part("map name"):
-                            name = read_map_name(shot[0], g)
+                            name = read_map_name(shot[0], g, self.filtered)
                             self._part_ok("map name")
                             self._tried("map", name is not None)
                         self.map_look = {"image": shot[0], "text": name}
