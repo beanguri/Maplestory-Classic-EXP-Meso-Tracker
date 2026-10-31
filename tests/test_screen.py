@@ -708,6 +708,32 @@ finally:
     party_v3.read_party_v3 = _real_v3
 check("party v3 through the reader: told the filter is on only when ScreenReader.filtered", _seen_flags == [True, False])
 
+# F12: while the filter is still "unknown" (the first ~6-12 s, or after a size change) a filtered list reads as "no list" the Default
+# way = alone (WRONG on the exam: 3 as 1). "No list" is then looked at the filtered way too: a list found there is unclear, never alone.
+_PL = party_v3.PartyLook
+def _stub_v3(default, filtered, calls):
+    return lambda img, hint=None, last=None, hsv=None, filtered_=False: (calls.append(filtered_), filtered if filtered_ else default)[1]
+_solo, _three, _unc = _PL(1, "ok", None, None, 0), _PL(3, "ok", 1.875, (1, 1, 1, 1), 0), _PL(None, "unclear", 1.875, (1, 1, 1, 1), 0)
+_hsv = cv2.cvtColor(_win, cv2.COLOR_BGR2HSV)
+_cases = {}
+try:
+    for _name, _state, _def, _flt in (("unknown, list drawn filtered", "unknown", _solo, _three), ("unknown, list unclear filtered", "unknown", _solo, _unc),
+                                      ("unknown, really alone", "unknown", _solo, _solo), ("unknown, Default list read", "unknown", _three, _solo),
+                                      ("off, list drawn filtered", "off", _solo, _three), ("on", "on", _three, _three), ("no_effect", "no_effect", _solo, _three)):
+        _calls = []
+        party_v3.read_party_v3 = _stub_v3(_def, _flt, _calls)
+        _rdr._filter.state, _rdr._party_last = _state, None
+        _cases[_name] = (_rdr._party_v3(_win, _hsv, 768), _calls)
+finally:
+    party_v3.read_party_v3 = _real_v3
+check("party v3 while the filter is unknown: a list that only shows the filtered way is unclear (never alone)",
+      _cases["unknown, list drawn filtered"] == ((None, "unclear"), [False, True])
+      and _cases["unknown, list unclear filtered"] == ((None, "unclear"), [False, True]))
+check("party v3 while the filter is unknown: really alone stays 1; a list read the Default way is not looked at twice",
+      _cases["unknown, really alone"] == ((1, "ok"), [False, True]) and _cases["unknown, Default list read"] == ((3, "ok"), [False]))
+check("party v3: the second (filtered) look is only for 'unknown' (off, on and no_effect read once)",
+      _cases["off, list drawn filtered"] == ((1, "ok"), [False]) and _cases["on"] == ((3, "ok"), [True]) and _cases["no_effect"] == ((1, "ok"), [False]))
+
 # ---- party v3 decides (0.9.15, Q10); today's reader is the fallback
 PL = party_v3.PartyLook
 for look, want, why in ((None, (3, None), "v3 didn't run: today's count"),
