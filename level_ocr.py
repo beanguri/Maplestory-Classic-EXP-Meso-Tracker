@@ -24,6 +24,11 @@ GAP_2 = 15.0                                 # from the "LV" letters to the firs
 GAP_TOL = 2.0                                # at every size; the badge is centred, so one more digit starts 6 px further left) +- this
 E_OK = 0.006                                 # the best digit's mean squared error (of 0..1 ink) can be at most this...
 E_RATIO, E_GAP = 3.0, 0.012                  # ...and the next digit's at least this many times and this much more
+# "Default Ratio (Filter Applied)": the game sharpens the whole picture (an unsharp mask whose blur grows with the UI scale), so
+# the drawn tile is sharpened the same way before it is compared. Fitted on the three filtered tune sizes (1920x1080,
+# 2560x1440, 5120x2880: blur 0.5-0.6 and amount 1.0-1.3 each); used only when the filter is known to be on (filter_ui.py).
+SHARP_SIGMA, SHARP_AMOUNT = 0.55, 1.1        # blur radius in UI scales (screen pixels / scale), and how much of the difference is added back
+SIDE_FLAT_FILTERED = 45                      # the sharpening leaves a halo beside the tile (measured up to ~30 at 2x and 4x): a cover is far more
 COARSE = (-1.0, -0.5, 0.0, 0.5, 1.0)         # where the tile sits against the box found (pixels), first tried at these...
 FINE = (-0.25, -0.125, 0.0, 0.125, 0.25)     # ...then this far around the best of them
 _font = {}
@@ -56,23 +61,32 @@ def render_tile(mask, scale, x0, y0, ox, oy, h, w):
                           borderMode=cv2.BORDER_CONSTANT, borderValue=0)
 
 
-def tile_error(mask, pic, scale, x0, ox, oy, y0=1):
+def sharpen(drawn, scale):
+    """The game's "Default Ratio (Filter Applied)" on a drawn tile: the picture plus SHARP_AMOUNT times its difference from a
+    blurred copy (sigma SHARP_SIGMA * scale screen pixels), kept in 0..1 like the picture it is compared with."""
+    blur = cv2.GaussianBlur(drawn, (0, 0), SHARP_SIGMA * scale, borderType=cv2.BORDER_REPLICATE)
+    return np.clip(drawn + SHARP_AMOUNT * (drawn - blur), 0, 1)
+
+
+def tile_error(mask, pic, scale, x0, ox, oy, y0=1, filtered=False):
     """How far the drawn tile is from pic (white coverage 0..1), over the tile's inside, as a mean squared error."""
     drawn = render_tile(mask, scale, x0, y0, ox, oy, *pic.shape)
+    if filtered:
+        drawn = sharpen(drawn, scale)
     # (only the tile's inside: the digit never comes near the edge, and what is outside the tile isn't the same everywhere)
     c0, c1 = max(0, int(x0 + scale)), int(x0 + (TILE_W - 1) * scale)
     r0, r1 = max(0, int(y0 + 2 * scale)), int(y0 + (BOX_H - 1) * scale)
     return float(((drawn[r0:r1, c0:c1] - pic[r0:r1, c0:c1]) ** 2).mean())
 
 
-def best_fit(mask, pic, scale, x0, y0=1):
+def best_fit(mask, pic, scale, x0, y0=1, filtered=False):
     """The smallest tile_error over where the tile may sit against the box found."""
     whole = abs(scale - round(scale)) < 0.01
     coarse = (-2.0, -1.0, 0.0, 1.0, 2.0) if whole else COARSE
-    e, ox, oy = min((tile_error(mask, pic, scale, x0, ox, oy, y0), ox, oy) for ox in coarse for oy in coarse)
+    e, ox, oy = min((tile_error(mask, pic, scale, x0, ox, oy, y0, filtered), ox, oy) for ox in coarse for oy in coarse)
     if whole:
         return e
-    return min(tile_error(mask, pic, scale, x0, ox + dx, oy + dy, y0) for dx in FINE for dy in FINE)
+    return min(tile_error(mask, pic, scale, x0, ox + dx, oy + dy, y0, filtered) for dx in FINE for dy in FINE)
 
 
 def find_badge(bgr, x0, cy, gh):
@@ -130,7 +144,7 @@ def has_label(row, box, gh):
     return label_span(row, box, gh) >= 2.0
 
 
-def sides_clear(row, box, scale, gh, n):
+def sides_clear(row, box, scale, gh, n, filtered=False):
     """Is nothing covering a tile? A window or cursor over the first or last tile leaves the tiles still showing looking like a
     shorter badge ("3" for "32"). The badge is centred, so with n tiles the first starts a known distance from the "LV"
     letters (a covered first tile moves it 12 px, a covered last one changes n); and the panel right of the last tile is plain."""
@@ -139,10 +153,10 @@ def sides_clear(row, box, scale, gh, n):
     if letters is None or abs((bx - letters[1]) / scale - (GAP_2 + 6 * (2 - n))) > GAP_TOL:
         return False
     strip = row[by:by + h, bx + w + 1:bx + w + 1 + max(2, int(round(SIDE * scale)))].astype(np.float32)
-    return strip.shape[1] >= 2 and bool((strip.max(axis=1) - strip.min(axis=1)).max() <= SIDE_FLAT)
+    return strip.shape[1] >= 2 and bool((strip.max(axis=1) - strip.min(axis=1)).max() <= (SIDE_FLAT_FILTERED if filtered else SIDE_FLAT))
 
 
-def read_digits(row, box, scale, gh):
+def read_digits(row, box, scale, gh, filtered=False):
     """The digits of the badge at one scale: (text, errors) or None when the box doesn't fit that scale. text has "?"
     where a tile's digit isn't certain."""
     bx, by, w, h = box
@@ -152,7 +166,7 @@ def read_digits(row, box, scale, gh):
     blue = row[by - 1:by + h + 1, bx - 1:bx + w + 1, 0].astype(np.float32)
     if blue.shape != (h + 2, w + 2):
         return None
-    if not sides_clear(row, box, scale, gh, n):
+    if not sides_clear(row, box, scale, gh, n, filtered):
         return "?" * n, ()
     lo, hi = float(np.percentile(blue, 10)), float(np.percentile(blue, 99.5))
     if hi - lo < MIN_RANGE:
@@ -160,7 +174,7 @@ def read_digits(row, box, scale, gh):
     pic = np.clip((blue - lo) / (hi - lo), 0, 1)
     text, errors = "", []
     for i in range(n):
-        got = sorted((best_fit(mask, pic, scale, 1 + TILE_STEP * i * scale), ch) for ch, mask in font().items())
+        got = sorted((best_fit(mask, pic, scale, 1 + TILE_STEP * i * scale, filtered=filtered), ch) for ch, mask in font().items())
         (e1, d), (e2, _) = got[0], got[1]
         ok = e1 <= E_OK and e2 >= E_RATIO * e1 and e2 - e1 >= E_GAP
         text += d if ok else "?"
@@ -168,9 +182,10 @@ def read_digits(row, box, scale, gh):
     return text, tuple(errors)
 
 
-def read_level(bgr, x0, cy, gh, scales, look=None):
+def read_level(bgr, x0, cy, gh, scales, look=None, filtered=False):
     """The level (1-250) read from the badge, or None. scales: the UI scales worth trying (ui_layout.candidate_scales).
-    look (a dict) gets the badge picture and why."""
+    look (a dict) gets the badge picture and why. filtered: the game's filter is known to be on (ScreenReader.filtered):
+    the digits are drawn sharpened. Anything else reads as the Default picture."""
     if look is not None:
         look.clear()
         look.update(image=None, why="")
@@ -190,7 +205,7 @@ def read_level(bgr, x0, cy, gh, scales, look=None):
         return fail("the LV label wasn't there")
     reads = {}
     for scale in sorted(set(r for r in (round(float(s), 4) for s in scales) if r > 0)):
-        got = read_digits(row, box, scale, gh)
+        got = read_digits(row, box, scale, gh, filtered)
         if got:
             reads[scale] = got[0]
     if not reads:

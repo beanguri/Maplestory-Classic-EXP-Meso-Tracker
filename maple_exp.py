@@ -2254,7 +2254,7 @@ class ScreenReader:
         look = {}
         try:
             scales = [s for _, s in ui_layout.candidate_scales(rect[3])]
-            seen = level_ocr.read_level(shot[0], wx + ax - shot[1], wy + ay - shot[2], g, scales, look) if shot else None
+            seen = level_ocr.read_level(shot[0], wx + ax - shot[1], wy + ay - shot[2], g, scales, look, self.filtered) if shot else None
         except Exception as e:              # (anything unexpected: not a level, back off)
             look["why"] = f"the level read failed: {e}"
             self._part_failed("level", e)
