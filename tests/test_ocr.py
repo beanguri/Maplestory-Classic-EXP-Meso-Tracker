@@ -114,11 +114,11 @@ ocr.subprocess.run = real_run
 ocr.subprocess.run = real_run
 
 # ---- with the real Tesseract: one run for many pictures gives the same text as one run each
-tess = m.find_tesseract()
+tess, tess_data = m.locate_tesseract()[:2]                 # (called the way the overlay calls it: with its data folder)
 if not tess:
     print("     (Tesseract isn't installed: the real-Tesseract tests are skipped)")
 else:
-    real = ocr.Tesseract(tess)
+    real = ocr.Tesseract(tess, tessdata=tess_data or None)
     rnd = random.Random(5)
     words = ["Rocky Road II", "Ant Tunnel I", "The Land of Wild Boar II", "Bandit", "Night Lord",
              "Hidden Street <Henesys>", "", "123,456,789", "0", "12", "x"]
@@ -347,13 +347,18 @@ brew = Path("/opt/homebrew/bin/tesseract")
 check("macOS looks next to the program (Homebrew layout) first, then in Homebrew's prefixes",
       [p.as_posix() for p in mac.tessdata_candidates(brew)]
       == ["/opt/homebrew/share/tessdata", "/opt/homebrew/share/tessdata", "/usr/local/share/tessdata"])
-check("macOS passes --tessdata-dir only for a folder that isn't Tesseract's own default",
-      mac.tessdata_arg(brew, Path("/opt/homebrew/share/tessdata")) == ""
+check("macOS always passes --tessdata-dir (Tesseract looks where it was compiled for, not beside itself)",
+      Path(mac.tessdata_arg(brew, Path("/opt/homebrew/share/tessdata"))).as_posix() == "/opt/homebrew/share/tessdata"
       and Path(mac.tessdata_arg(brew, Path("/usr/local/share/tessdata"))).as_posix() == "/usr/local/share/tessdata")
+inapp = Path("/Applications/Maple Classic Exp Overlay.app/Contents/Frameworks/tesseract/tesseract")
+check("macOS: the Tesseract inside the downloaded app gets the app's own data folder (it can't find it alone: M01)",
+      Path(mac.tessdata_arg(inapp, mac.tessdata_candidates(inapp)[0])).as_posix()
+      == "/Applications/Maple Classic Exp Overlay.app/Contents/Frameworks/share/tessdata")
 cellar = Path("/opt/homebrew/Cellar/tesseract/5.5.0/bin/tesseract")      # (a versioned Homebrew folder, if that is the program found)
-check("macOS: a program inside a versioned Cellar folder looks in that version's own share/tessdata first, passing nothing",
+check("macOS: a program inside a versioned Cellar folder looks in that version's own share/tessdata first, and passes it",
       mac.tessdata_candidates(cellar)[0].as_posix() == "/opt/homebrew/Cellar/tesseract/5.5.0/share/tessdata"
-      and mac.tessdata_arg(cellar, mac.tessdata_candidates(cellar)[0]) == "")
+      and Path(mac.tessdata_arg(cellar, mac.tessdata_candidates(cellar)[0])).as_posix()
+      == "/opt/homebrew/Cellar/tesseract/5.5.0/share/tessdata")
 macports = Path("/opt/local/bin/tesseract")
 check("macOS: MacPorts' program finds /opt/local/share/tessdata beside it",
       mac.tessdata_candidates(macports)[0].as_posix() == "/opt/local/share/tessdata")
