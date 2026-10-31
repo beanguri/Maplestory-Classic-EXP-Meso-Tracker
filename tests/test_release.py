@@ -141,6 +141,29 @@ finally:
     os.environ.pop("MAPLE_EXP_ALLOW_SHARE", None)
     os.environ["MAPLE_EXP_DATA"] = str(m.DATA_DIR)
 
+# A Mac test build leaves seen_version alone, so the release after it still shows its What's new.
+from types import SimpleNamespace  # noqa: E402
+
+shown = []
+stand_in = SimpleNamespace(cfg=dict(m.load_config()), _fresh=False, _ask_to_share=lambda: shown.append("share"),
+                           _whats_new=lambda notes, then: shown.append("notes"),
+                           _shape_picker=lambda then: shown.append("picker"))
+try:
+    m.VERSION = "0.9.16-mactest.1"
+    stand_in.cfg["seen_version"] = "0.9.15-beta"
+    m.App._first_run(stand_in)
+    check("a Mac test build doesn't store its version as seen", stand_in.cfg["seen_version"] == "0.9.15-beta")
+    stand_in.cfg["seen_version"], stand_in._fresh = "", True
+    m.App._first_run(stand_in)
+    check("...nor on a new install (it still picks a shape)", stand_in.cfg["seen_version"] == "" and "picker" in shown)
+    m.VERSION, stand_in._fresh = "0.9.16-beta", False
+    stand_in.cfg["seen_version"] = "0.9.15-beta"
+    m.App._first_run(stand_in)
+    check("...while a release build still does", stand_in.cfg["seen_version"] == "0.9.16-beta")
+    check("(why: a Mac test version sorts above its beta)", m.version_key("0.9.16-mactest.1") > m.version_key("0.9.16-beta"))
+finally:
+    m.VERSION = real_version
+
 # In the Mac test build itself (the workflow runs this file again after release_plan.py set the version), the real
 # VERSION must be blocked, whatever the environment says.
 if m.TEST_BUILD_MARK in m.VERSION:

@@ -5651,7 +5651,9 @@ class App:
         sharing question comes after."""
         seen = self.cfg.get("seen_version", "")
         newer = not seen or version_key(VERSION) > version_key(seen)
-        if newer:
+        # (a Mac test build keeps nothing: "0.9.16-mactest.1" sorts above "0.9.16-beta", so the release would skip
+        # its What's new)
+        if newer and TEST_BUILD_MARK not in VERSION:
             self.cfg["seen_version"] = VERSION                 # (first, so a crash in a window can't repeat it)
             save_config(self.cfg)
         if self._fresh and newer:
