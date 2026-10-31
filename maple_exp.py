@@ -52,6 +52,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 from capture import ScreenCapture, as_capture, grab  # noqa: F401
 import digits_v2
 import exp_font
+import filter_ui
 import healthlog
 import level_ocr
 import mesos_v2
@@ -103,6 +104,7 @@ LOG_BLOCK = 300             # seconds of non-stop EXP gain behind each log updat
 MESOS_PATH = DATA_DIR / "mesos_digits.npz"             # learned as you play...
 MESOS_START_PATH = ASSETS / "mesos_digits.npz"          # ...starting from these
 MESOS_BOX_PATH = ASSETS / "mesos_box.npz"
+FILTER_BAR_PATH = ASSETS / "filter_bar.npz"     # the status bar the filtered-UI probe compares with (filter_ui.py)
 MAPS_PATH = ASSETS / "maps.txt"            # the game's map names (see server/tools/make_maps.py)
 MAP_HIDDEN_SECONDS = 3      # the minimap's name unseen this long: say so, and hold back saving to the log
 MAP_BLIND_SECONDS = 45      # the minimap's name box unseen this long: the map may have changed unnoticed
@@ -1953,6 +1955,17 @@ class ScreenReader:
         self._part_shadows = []             # (part, what happened, v2's ms) of the other parts' shadows in this look
         self.saved_v2 = {}                  # "WxH/gh" -> where reader v2 found the bar last time (from the config)
         self.v2_spot = None                 # ...and where it has found it in this game window (x0, y0, x1, y1)
+        self._filter = filter_ui.FilterWatch(filter_ui.load_reference(FILTER_BAR_PATH))     # "Default Ratio (Filter Applied)"
+
+    @property
+    def filter_state(self):
+        """Is the game's filtered UI on? "on", "off", "unknown" or "no_effect" (filter_ui.py). A reader uses its
+        filtered assets only when `filtered`; any other answer means Default exactly as before."""
+        return self._filter.state
+
+    @property
+    def filtered(self):
+        return self._filter.filtered
 
     @contextlib.contextmanager
     def _part(self, part):
@@ -2045,6 +2058,7 @@ class ScreenReader:
         self.window, self.window_until, self.window_box = None, 0.0, False
         self.exp_anchor, self.next_job_read = None, 0.0
         self.next_level_read, self._level_candidate = 0.0, None
+        self._filter.reset()
         self.request_map()
 
     def read(self, capture):
@@ -2063,6 +2077,8 @@ class ScreenReader:
             self._forget_places()
         rect = self._game_rect()
         self.last_rect = rect
+        with self._part("filter"):
+            self._look_at_filter(capture, rect)
         if self.mode == "region":
             reading = self._read_region(capture, rect)
         elif not self.hwnd and PLATFORM.missing_permission():
@@ -2097,6 +2113,24 @@ class ScreenReader:
         return self._with_part_notes(reading._replace(
             level=(self.level, "badge") if self.level and reading.percent_only and self.mode == "window" else None,
             tries=tuple(self._tries), shadows=tuple(self._part_shadows), ui=self._ui_mode(reading, rect) or reading.ui))
+
+    def _look_at_filter(self, capture, rect):
+        """Keeps the answer to "is the filtered UI on?" up to date (filter_ui.py): a small picture of the status bar every
+        EVERY seconds, nothing at all where the UI is drawn 1:1. Only a game window has a bar to look at."""
+        watch = self._filter
+        if not (rect and self.mode == "window" and self.hwnd):
+            watch.reset()
+            return
+        known = ui_layout.mode_from_gh(self.gh, rect[3]) if self.gh else None
+        if watch.settle(rect[2], rect[3], known[0] if known else None):
+            return
+        now = time.monotonic()
+        if not watch.due(now):
+            return
+        left, top, w, h = filter_ui.probe_box(rect[2], rect[3])
+        sx, sy = rect[0] + left, rect[1] + top
+        shot = None if self._blocked(sx, sy, w, h) else capture.grab(sx, sy, w, h)
+        watch.feed(now, shot[0] if shot else None, (w, h))
 
     def _ui_mode(self, reading, rect):
         """"default" or "ideal" when this look can tell (the EXP bar was found, so its digit height is this window's),
