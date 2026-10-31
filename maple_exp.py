@@ -2697,7 +2697,7 @@ class ScreenReader:
         img, sx, sy = shot
         got = ui_layout.mode_from_gh(self.gh, wh) if self.gh and self.mode == "window" else None
         hint = potion_bar.Hint(self.bar_last, got, self.bar_runs)
-        look = potion_bar.read_potions(img, ww, wh, (sx - wx, sy - wy), hint, self.potion_table)
+        look = potion_bar.read_potions(img, ww, wh, (sx - wx, sy - wy), hint, self.potion_table, filtered=self.filtered)
         self.bar_last = potion_bar.bar_from_look(look, ww, wh)
         self.bar_runs = {s.index: s.run for s in look.slots if s.run is not None}
         if not look.seen:

@@ -123,6 +123,14 @@ class PotionTable:
             rows = [(k, fp) for k, i in enumerate(self.items) for fp in i.get(key, ())]
             self.seen_owner[style] = np.array([k for k, _ in rows], int)
             self.seen_matrix[style] = np.array([fp for _, fp in rows], np.float32).reshape(-1, FINGERPRINT_LEN)
+        # the same under the game's "Default Ratio (Filter Applied)" (a sharpening: icons come out a little different): "seen_filtered" /
+        # "seen_controller_filtered", made by tools/make_potion_seen.py --filtered. An item without them keeps its unfiltered rows.
+        self.filtered_owner, self.filtered_matrix, self.filtered_seen = {}, {}, {}
+        for style, key, plain in (("keyboard", "seen_filtered", "seen"), ("controller", "seen_controller_filtered", "seen_controller")):
+            rows = [(k, fp) for k, i in enumerate(self.items) for fp in (i.get(key) or i.get(plain, ()))]
+            self.filtered_owner[style] = np.array([k for k, _ in rows], int)
+            self.filtered_matrix[style] = np.array([fp for _, fp in rows], np.float32).reshape(-1, FINGERPRINT_LEN)
+            self.filtered_seen[style] = [bool(i.get(key) or i.get(plain)) for i in self.items]
         self.prices = {i["name"]: i for i in items}
 
     @classmethod
@@ -134,11 +142,13 @@ class PotionTable:
 
     aliases = {}
 
-    def distances(self, vec, style="keyboard"):
-        """How far a slot's fingerprint is from every item's (smaller is closer). style: the slot style it was cut from."""
+    def distances(self, vec, style="keyboard", filtered=False):
+        """How far a slot's fingerprint is from every item's (smaller is closer). style: the slot style it was cut from. filtered:
+        the game's filter is on (ScreenReader.filtered): the items' rows recorded or made for it are used."""
         d = self._distances(self.matrix_controller if style == "controller" else self.matrix, vec)
-        if len(self.seen_owner[style]):
-            np.minimum.at(d, self.seen_owner[style], self._distances(self.seen_matrix[style], vec))
+        owner, matrix = (self.filtered_owner, self.filtered_matrix) if filtered else (self.seen_owner, self.seen_matrix)
+        if len(owner[style]):
+            np.minimum.at(d, owner[style], self._distances(matrix[style], vec))
         return d
 
     @staticmethod
@@ -149,18 +159,18 @@ class PotionTable:
         shape = np.abs(m[:, n + 3:] - vec[n + 3:]).mean(1)
         return W_COL * col + W_ACH * ach + W_SHAPE * shape * 4.0
 
-    def identify(self, vec, style="keyboard"):
+    def identify(self, vec, style="keyboard", filtered=False):
         """(name, kind, distance) of the item the fingerprint clearly is, or None when it isn't clearly one. An item
-        counts as seen when it was recorded on a real slot of this style."""
+        counts as seen when it was recorded on a real slot of this style (filtered: or its rows were made for the filter)."""
         if vec is None or not len(self.items):
             return None
-        d = self.distances(vec, style)
+        d = self.distances(vec, style, filtered)
         order = np.argsort(d)
         best = order[0]
         # (a skill icon that looks like another skill icon is no doubt: only a potion or food near it is)
         rest = [k for k in order[1:] if self.kinds[best] != "skill" or self.kinds[k] != "skill"]
         second = d[rest[0]] if rest else float("inf")
-        seen = bool(self.items[best].get("seen_controller" if style == "controller" else "seen"))
+        seen = self.filtered_seen[style][best] if filtered else bool(self.items[best].get("seen_controller" if style == "controller" else "seen"))
         if d[best] <= (ACCEPT_MAX if seen else UNSEEN_MAX) and second >= (MIN_RATIO if seen else UNSEEN_RATIO) * d[best]:
             return self.names[best], self.kinds[best], float(d[best])
         return None

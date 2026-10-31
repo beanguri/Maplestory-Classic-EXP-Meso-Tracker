@@ -16,6 +16,18 @@ Usage (from the repo root):
   catalog (name, icon_id, origin per item) and the folder of icon PNGs (untrusted downloads kept outside the repo,
   read only to compute numbers); without them, "fingerprint_controller" is left as it is.
 Re-running replaces what an earlier run added.
+
+Filtered (the game's "Default Ratio (Filter Applied)", 0.9.16):
+    python -I tools/make_potion_seen.py --filtered <truth_tune.json> [--real <filtered_truth_tune.json>]
+  Adds "seen_filtered" (keyboard slots) and "seen_controller_filtered" (controller slots) to the items, and touches nothing else. The
+  filter is a sharpening (a blurred copy of the picture, SHARP_SIGMA UI scales wide, SHARP_AMOUNT of its difference added back; fitted on real
+  filtered/Default pairs, see level_ocr.py); it does nothing where the UI is drawn 1:1, and Ideal has no filter. So the Default-UI tune slots
+  at a UI scale of 1.05 or more are cut out of the frame, sharpened that way, and fingerprinted like the real ones. Checked on the real
+  filtered tune recordings: the made fingerprints are 0.01-0.10 from the real filtered ones (Default's are 0.17-0.65). Skill icons only
+  join the skill entries they are 0.10 or less from (the others are left out). Used only while the filter is known to be on.
+  --real: the filtered tune recordings' own truth ({setup: {full|strip: {frame: {"filter", "slots"}}}}, "root" = C:/mxp/rec, a setup's window
+  size from its notes.json): an item the Default libraries never recorded (Red Potion, White Potion) gets its rows from the real filtered
+  slots (the filter on, quality clean) instead. Tune recordings only: the exam is never looked at.
 """
 import json
 import sys
@@ -117,7 +129,124 @@ def controller_references(data, catalog, icons):
             item["fingerprint_controller"] = [round(float(v), 4) for v in fp(item["name"], *best[1:])]
 
 
+SHARP_SIGMA, SHARP_AMOUNT = 0.55, 1.1      # as in level_ocr.py and glyphs.py
+SKILL_JOIN = 0.10          # a sharpened skill icon joins the skill entry it is this close to (the metric of PotionTable._distances)
+FILTER_MIN_SCALE = 1.05    # below this the UI is drawn 1:1 and the filter does nothing (ScreenReader.filter_state "no_effect")
+
+
+def sharpen_slot(img, rect, scale):
+    """The slot's crop (BGR) of img with the filter's sharpening applied (computed over the crop plus a margin, so its edges are right)."""
+    x, y, w, h = rect
+    pad = int(np.ceil(4 * SHARP_SIGMA * scale)) + 2
+    x0, y0 = max(x - pad, 0), max(y - pad, 0)
+    part = img[y0:y + h + pad, x0:x + w + pad].astype(np.float32)
+    blur = cv2.GaussianBlur(part, (0, 0), SHARP_SIGMA * scale, borderType=cv2.BORDER_REPLICATE)
+    out = np.clip(part + SHARP_AMOUNT * (part - blur), 0, 255).astype(np.uint8)
+    return out[y - y0:y - y0 + h, x - x0:x - x0 + w]
+
+
+def filtered_rows(truth, data):
+    """Sets "seen_filtered" / "seen_controller_filtered" on the items of `data` from the sharpened Default tune slots of `truth`."""
+    root = Path(truth["root"])
+    groups = defaultdict(list)                 # (style, item name or skill entry name, quality) -> fingerprints
+    skill_rows = [(i["name"], np.array(fp, np.float32)) for i in data["items"] if i.get("kind") == "skill" for fp in i.get("seen", ())]
+    skill_rows += [(i["name"], np.array(fp, np.float32)) for i in data["items"] if i.get("kind") == "skill" for fp in i.get("seen_controller", ())]
+    n_frames = 0
+    for f in truth["frames"]:
+        if f["mode"] != "default" or not f["visible"] or f["scale"] < FILTER_MIN_SCALE:
+            continue
+        img = cv2.imread(str(root / f["path"]))
+        if img is None:
+            continue
+        w, h = f["window"]
+        at = (0, h - img.shape[0])
+        bar = potion_bar.find_bar(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), at, w, h)
+        if bar is None or bar.layout not in potion_bar.FIND_LAYOUTS:
+            continue
+        n_frames += 1
+        truth_slots = {s["index"]: s for s in f["slots"]}
+        for spot in bar.slots:
+            slot = truth_slots.get(spot.index)
+            x, y, sw, sh = spot.rect
+            if slot is None or abs(slot["rect"][0] - x) > 3 or abs(slot["rect"][1] - y) > 3 or slot["quality"] not in ("clean", "dim"):
+                continue
+            if slot["kind"] not in ("consumable", "skill", "other"):
+                continue
+            crop = sharpen_slot(img, (x, y - at[1], sw, sh), bar.scale)
+            if crop.shape[:2] != (sh, sw):
+                continue
+            vec = potions.fingerprint(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), style=spot.style)
+            if vec is None:
+                continue
+            if slot["kind"] == "skill":
+                d = [(float(potions.PotionTable._distances(row[None], vec)[0]), name) for name, row in skill_rows]
+                best = min(d) if d else None
+                if best is None or best[0] > SKILL_JOIN:
+                    continue
+                name = best[1]
+            elif slot["item"]:
+                name = slot["item"].replace(" (Alt)", "")
+            else:
+                continue
+            groups[(spot.style, name, slot["quality"])].append(vec)
+    print(f"{n_frames} Default frames at a UI scale of {FILTER_MIN_SCALE} or more")
+    by_name = {i["name"]: i for i in data["items"]}
+    for i in data["items"]:
+        i.pop("seen_filtered", None)
+        i.pop("seen_controller_filtered", None)
+    for (style, name, quality), vecs in sorted(groups.items()):
+        key = "seen_filtered" if style == "keyboard" else "seen_controller_filtered"
+        print(f"{name:20s} {style:10s} {quality:6s} {len(vecs):4d} slots", "" if len(vecs) >= MIN_SAMPLES else "(too few: left out)")
+        if len(vecs) >= MIN_SAMPLES and name in by_name:
+            by_name[name].setdefault(key, []).append([round(float(v), 4) for v in np.mean(vecs, axis=0)])
+
+
+def real_rows(path, data, root="C:/mxp/rec"):
+    """Adds "seen_filtered" rows for the consumables that have none yet, from the filter-on slots of the filtered tune recordings."""
+    truth = json.loads(Path(path).read_text(encoding="utf-8"))
+    by_name = {i["name"]: i for i in data["items"]}
+    groups = defaultdict(list)
+    for setup, kinds in truth.items():
+        notes = json.loads((Path(root) / setup / "notes.json").read_text(encoding="utf-8"))
+        w, h = notes["sizes"][0]["rect"][2:4]
+        for kind, frames in kinds.items():
+            for name, f in frames.items():
+                wanted = {k: s for k, s in f["slots"].items() if s["kind"] == "consumable" and s["quality"] == "clean" and s["item"] in by_name
+                          and not by_name[s["item"]].get("seen_filtered")}
+                if f["filter"]["state"] != "on" or not wanted:
+                    continue
+                img = cv2.imread(str(Path(root) / setup / kind / name))
+                if img is None:
+                    continue
+                at = (0, h - img.shape[0])
+                bar = potion_bar.find_bar(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), at, w, h)
+                if bar is None or bar.layout != "keyboard":
+                    continue
+                for spot in bar.slots:
+                    row, col = divmod(spot.index, 4)
+                    slot = wanted.get(f"{row},{col}")
+                    if slot is None:
+                        continue
+                    x, y, sw, sh = spot.rect
+                    crop = img[y - at[1]:y - at[1] + sh, x:x + sw]
+                    vec = potions.fingerprint(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB), style="keyboard") if crop.shape[:2] == (sh, sw) else None
+                    if vec is not None:
+                        groups[slot["item"]].append(vec)
+    for name, vecs in sorted(groups.items()):
+        print(f"{name:20s} real filtered slots {len(vecs):4d}", "" if len(vecs) >= MIN_SAMPLES else "(too few: left out)")
+        if len(vecs) >= MIN_SAMPLES:
+            by_name[name]["seen_filtered"] = [[round(float(v), 4) for v in np.mean(vecs, axis=0)]]
+
+
 def main():
+    if sys.argv[1] == "--filtered":
+        data = json.loads(TABLE.read_text(encoding="utf-8"))
+        filtered_rows(json.loads(Path(sys.argv[2]).read_text()), data)
+        if "--real" in sys.argv:
+            real_rows(sys.argv[sys.argv.index("--real") + 1], data)
+        TABLE.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        print("written", TABLE)
+        return
     truth = json.loads(Path(sys.argv[1]).read_text())
     args = sys.argv[2:]
     damage = {}

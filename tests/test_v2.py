@@ -731,5 +731,73 @@ check("party v3: filtered=False is the old code (same answers as with no argumen
 alone = np.full((1080, 1920, 3), 150, np.uint8)
 check("party v3 filtered: no list on screen is still solo", p3.read_party_v3(sharpened(alone, 1.406), None, None, None, True).count == 1)
 
+
+# ---- "Default Ratio (Filter Applied)" (0.9.16, F09): potion counts and icons
+# Counts: the drawn digits are sharpened the way the game's filter does, only when `filtered`; the Default drawing is untouched.
+filt_good = filt_total = 0
+filt_bad, plain_bad, dflt_bad = [], [], []
+for scale in (1.40625, 1.5625, 1.875, 2.8125, 3.75):
+    for sigma, amount in ((0.55, 1.1), (0.5, 1.3), (0.6, 1.1)):
+        for text in ("0", "7", "23", "305", "4096", "1234", "888", "381"):
+            for name, back in backs.items():
+                pic, rect = fake_slot(text, scale, back=back)
+                shown = sharpened(pic, scale, sigma, amount)
+                got = glyphs.read_count(shown, rect, scale, filtered=True)[0]
+                filt_total += 1
+                filt_good += got == int(text)
+                if got is not None and got != int(text):
+                    filt_bad.append((scale, text, name, got))
+                got = glyphs.read_count(shown, rect, scale)[0]                       # (the Default reading of a filtered picture)
+                if got is not None and got != int(text):
+                    plain_bad.append((scale, text, name, got))
+                got = glyphs.read_count(pic, rect, scale, filtered=True)[0]            # (the filtered reading of a Default picture)
+                if got is not None and got != int(text):
+                    dflt_bad.append((scale, text, name, got))
+check(f"potion counts filtered: a sharpened count is never read wrong, and most are read ({filt_good}/{filt_total} right) {filt_bad[:3] or ''}",
+      not filt_bad and filt_good >= 0.9 * filt_total)
+check(f"potion counts filtered: the Default reading of a sharpened picture is unknown or right, never wrong ({plain_bad[:3] or 'none wrong'})", not plain_bad)
+check(f"potion counts filtered: a Default picture read the filtered way is unknown or right, never wrong ({dflt_bad[:3] or 'none wrong'})", not dflt_bad)
+pic, rect = fake_slot("305", 1.875)
+check("potion counts: filtered=False is the old code (same answer and same spot as with no argument)",
+      glyphs.read_count(pic, rect, 1.875)[1] == glyphs.read_count(pic, rect, 1.875, filtered=False)[1]
+      and glyphs.read_count(sharpened(pic, 1.875), rect, 1.875, filtered=True)[0] == 305)
+# a hint from the last (filtered) look is checked first, with the same filtered drawing
+shown = sharpened(fake_slot("23", 1.875)[0], 1.875)
+got, run = glyphs.read_count(shown, fake_slot("23", 1.875)[1], 1.875, filtered=True)
+got2, run2 = glyphs.read_count(sharpened(fake_slot("24", 1.875)[0], 1.875), fake_slot("24", 1.875)[1], 1.875, hint=run, filtered=True)
+check("potion counts filtered: a hint from the last look gives the new number at the same spot",
+      got == 23 and got2 == 24 and (run2.tx, run2.ty) == (run.tx, run.ty))
+
+# Icons: the table's rows made for the filter (tools/make_potion_seen.py --filtered) are used only when `filtered`
+fk = [k for k, i in enumerate(table.items) if i.get("seen_filtered")]
+check("the potion table has filtered rows for the items the Default libraries recorded and for Red and White Potion",
+      {"Blue Potion", "Lemon", "Meat", "Orange Potion", "Warrior Potion", "Red Potion", "White Potion"} <= {table.names[k] for k in fk})
+swap = []
+for k in fk:
+    for fp in table.items[k]["seen_filtered"]:
+        found = table.identify(np.array(fp, np.float32), "keyboard", True)
+        if found is not None and found[0] != table.names[k]:
+            swap.append((table.names[k], found[0]))
+check(f"every filtered row is itself or refused when the filter is on, never another item ({swap or 'none swapped'})", not swap)
+leak = []
+for k in fk:
+    if table.kinds[k] == "skill":
+        for fp in table.items[k]["seen_filtered"]:
+            found = table.identify(np.array(fp, np.float32), "keyboard", True)
+            if found is not None and found[1] != "skill":
+                leak.append((table.names[k], found[0]))
+check(f"no skill icon's filtered row reads as a potion ({leak or 'none'})", not leak)
+orange = table.names.index("Orange Potion")
+row = np.array(table.items[orange]["seen_filtered"][0], np.float32)
+check("a filtered row is the item when the filter is on, and is closer to it than the Default rows are",
+      (table.identify(row, "keyboard", True) or ("",))[0] == "Orange Potion"
+      and table.distances(row, "keyboard", True)[orange] < table.distances(row, "keyboard", False)[orange])
+check("identify and distances with no filter argument are the Default look",
+      np.array_equal(table.distances(row, "keyboard"), table.distances(row, "keyboard", False))
+      and table.identify(row, "keyboard") == table.identify(row, "keyboard", False))
+plain = potions.PotionTable([{"name": "A", "kind": "consumable", "fingerprint": [float(v) for v in row], "seen": [[float(v) for v in row]]}])
+check("an item with no filtered rows keeps its unfiltered rows when the filter is on (and counts as seen)",
+      plain.identify(row, "keyboard", True) == plain.identify(row, "keyboard", False) and plain.filtered_seen["keyboard"] == [True])
+
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)

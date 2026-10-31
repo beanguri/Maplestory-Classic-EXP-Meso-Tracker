@@ -242,14 +242,14 @@ COUNT_ICON_MAX = 0.40       # a count is only taken from a slot whose icon is th
                             # slot spoils the icon too, and the digits it hides can't be told from a count that ends
 
 
-def _slot_item(table, crop_bgr, style="keyboard"):
+def _slot_item(table, crop_bgr, style="keyboard", filtered=False):
     """(item, kind, distance) of one slot picture: kind "empty" for a bare plate, item None when it can't be told."""
     import potions
     rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
     vec = potions.fingerprint(rgb, style=style)
     if vec is None:
         return (None, "empty", 1.0) if potions.is_item_slot(rgb, style) else (None, None, 1.0)
-    found = table.identify(vec, style)
+    found = table.identify(vec, style, filtered)
     if found is None:
         return None, None, 1.0
     name, kind, dist = found
@@ -258,12 +258,14 @@ def _slot_item(table, crop_bgr, style="keyboard"):
     return table.aliases.get(name, name), ("consumable" if kind == "consumable" else "other"), dist
 
 
-def read_potions(img, window_w, window_h, at=(0, 0), hint=None, assets=None):
+def read_potions(img, window_w, window_h, at=(0, 0), hint=None, assets=None, filtered=False):
     """What the potion bar shows, as a PotionLook.
 
     img is a picture (BGR) of the game window or of part of it, whose top left is at `at` in the window.
     hint = Hint(last, mode_scale, runs): the last good BarLook is tried first, the EXP bar's mode and scale next,
-    runs the count readers' Runs of the last look."""
+    runs the count readers' Runs of the last look. filtered: the game's "Default Ratio (Filter Applied)" is on
+    (ScreenReader.filtered): the counts are drawn sharpened the way it shows them and the icons are told by the fingerprints made for it
+    (potions.PotionTable "seen_filtered"); False = Default exactly as before."""
     if img is None or not getattr(img, "size", 0):
         return NOT_SEEN
     table = assets or load_assets()
@@ -280,10 +282,10 @@ def read_potions(img, window_w, window_h, at=(0, 0), hint=None, assets=None):
         crop = img[cy:cy + h, cx:cx + w]
         if crop.shape[0] != h or crop.shape[1] != w:
             continue
-        item, kind, dist = _slot_item(table, crop, spot.style)
+        item, kind, dist = _slot_item(table, crop, spot.style, filtered)
         count, run, dropped = None, None, False
         if kind == "consumable":
-            count, run = glyphs.read_count(img, (cx, cy, w, h), bar.scale, spot.style, runs.get(spot.index))
+            count, run = glyphs.read_count(img, (cx, cy, w, h), bar.scale, spot.style, runs.get(spot.index), filtered=filtered)
             if count is not None and count < 1000 and dist > COUNT_ICON_MAX:
                 count, run, dropped = None, None, True      # (a 4-digit count can't be a cut-off longer one, and its digits spill into the icon)
         reads.append(SlotRead(spot.index, spot.rect, spot.style, item, kind, count, run, dist, dropped))
