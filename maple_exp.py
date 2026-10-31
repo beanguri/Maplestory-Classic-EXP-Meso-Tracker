@@ -49,7 +49,7 @@ import mss
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-from capture import ScreenCapture, WindowCapture, as_capture, grab  # noqa: F401
+from capture import ScreenCapture, WindowCapture, as_capture, black_out, grab  # noqa: F401
 import digits_v2
 import exp_font
 import healthlog
@@ -2074,9 +2074,9 @@ class ScreenReader:
                 monitors = getattr(getattr(capture, "sct", None), "monitors", None) or []
                 if bottom_off_screen(rect, [(m["left"], m["top"], m["width"], m["height"]) for m in monitors[1:]]):
                     reading = reading._replace(where=OFF_SCREEN_TEXT)
-            if reading.exp_kind in ("not_found", "covered") and reading.where != OFF_SCREEN_TEXT and PLATFORM.missing_permission():
+            if reading.exp_kind in ("not_found", "covered") and reading.where != OFF_SCREEN_TEXT:
                 # (Nexon's Mac app is found by its program name, which needs no permission: the picture is then empty)
-                reading = reading._replace(where=PLATFORM.missing_permission())
+                reading = reading._replace(where=PLATFORM.missing_permission() or reading.where)
         if reading.percent_only and self.mode == "region":
             # (a selected area has no game window around it: no badge to find, so typing the level in is open at once)
             self.level_failures = max(self.level_failures, LEVEL_FAILS_FOR_FALLBACK)
@@ -2256,16 +2256,9 @@ class ScreenReader:
     def _hide_own(self, shot, screen_copy=False):
         """The screenshot with this app's window blacked out, so it can never read itself. (A capture that
         sees through windows has nothing to hide; screen_copy=True is for a picture taken from the screen.)"""
-        r = self.own_rect
-        if not shot or not r or (self.capture.sees_through_windows and not screen_copy):
+        if self.capture.sees_through_windows and not screen_copy:
             return shot
-        img, sx, sy = shot
-        x0, y0 = max(0, r[0] - sx), max(0, r[1] - sy)
-        x1, y1 = min(img.shape[1], r[0] + r[2] - sx), min(img.shape[0], r[1] + r[3] - sy)
-        if x0 < x1 and y0 < y1:
-            img = img.copy()
-            img[y0:y1, x0:x1] = 0
-        return img, sx, sy
+        return black_out(shot, self.own_rect)
 
     def _covered(self, x, y, w, h, margin=0):
         """Does this app's window overlap (or come within margin px of) the given area?"""

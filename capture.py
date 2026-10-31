@@ -20,6 +20,19 @@ def grab(sct, left, top, width, height):
     return np.ascontiguousarray(shot[:, :, :3]), x0, y0
 
 
+def black_out(shot, rect):
+    """The (bgr, left, top) screenshot with the screen rectangle `rect` blacked out (a copy, if any of it was inside)."""
+    if not shot or not rect:
+        return shot
+    img, sx, sy = shot
+    x0, y0 = max(0, rect[0] - sx), max(0, rect[1] - sy)
+    x1, y1 = min(img.shape[1], rect[0] + rect[2] - sx), min(img.shape[0], rect[1] + rect[3] - sy)
+    if x0 < x1 and y0 < y1:
+        img = img.copy()
+        img[y0:y1, x0:x1] = 0
+    return img, sx, sy
+
+
 class Capture:
     """The interface. Subclasses fill in grab() and, if they see through windows, the flag."""
     name = "screen"                     # for bug reports and health reports
@@ -82,16 +95,8 @@ class WindowCapture(ScreenCapture):
                 part = self.whole[top - y:top - y + height, left - x:left - x + width, :3]
                 return np.ascontiguousarray(part), left, top
         shot = super().grab(left, top, width, height)
-        r = self.own_rect() if self.whole is not None else None   # (a screen copy in a see-through look: the
-        if shot and r:                                            # reader won't hide this app's window from it)
-            img, sx, sy = shot
-            x0, y0 = max(0, r[0] - sx), max(0, r[1] - sy)
-            x1, y1 = min(img.shape[1], r[0] + r[2] - sx), min(img.shape[0], r[1] + r[3] - sy)
-            if x0 < x1 and y0 < y1:
-                img = img.copy()
-                img[y0:y1, x0:x1] = 0
-            shot = img, sx, sy
-        return shot
+        # (a screen copy in a see-through look: the reader won't hide this app's window from it, so it's hidden here)
+        return black_out(shot, self.own_rect()) if self.whole is not None else shot
 
 
 def as_capture(source):
