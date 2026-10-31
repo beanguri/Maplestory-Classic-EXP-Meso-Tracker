@@ -268,7 +268,8 @@ jobs:
           cp parts/*.txt files/
           (cd files && for s in SHA256SUMS-*.txt; do sha256sum --check "$s"; done)
           rm files/SHA256SUMS-*.txt
-          LC_ALL=C sort -k2 parts/*.txt > files/SHA256SUMS.txt
+          # (one way to write each line: "hash  name", whether a job's tool wrote a space or a * before the name)
+          cat parts/*.txt | sed -E 's/^([0-9a-f]{64}) [ *]/\1  /' | LC_ALL=C sort -k2 > files/SHA256SUMS.txt
           # ...and the merged list names exactly the files here, each once.
           (cd files && ls | grep -vx SHA256SUMS.txt | LC_ALL=C sort > ../have.txt)
           awk '{ $1 = ""; sub(/^ +/, ""); print }' files/SHA256SUMS.txt | LC_ALL=C sort > want.txt
