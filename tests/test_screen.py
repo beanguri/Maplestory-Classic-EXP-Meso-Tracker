@@ -1491,6 +1491,98 @@ for cap_class, wanted in ((ScreenCapture, False), (SeeThrough, True)):
 check("the bare fake screen is wrapped as a screen copy", isinstance(m.as_capture(FakeScreen(frame)), ScreenCapture)
       and isinstance(m.as_capture(SeeThrough(None)), Capture))
 
+# ---- window capture (macOS): the game window pictured alone, so what's on top of the game on screen doesn't matter
+from capture import WindowCapture  # noqa: E402
+
+
+class OneWindow:
+    """Stands in for PLATFORM: one game window (number 7) at rect, pictured alone as `alone` (None: that fails)."""
+    captures_window_alone = True
+
+    def __init__(self, rect, alone):
+        self.rect, self.alone, self.asked = rect, alone, []
+
+    def find_game_window(self):
+        return 7
+
+    def window_exists(self, number):
+        return number == 7
+
+    def client_rect(self, number):
+        return self.rect
+
+    def missing_permission(self):
+        return None
+
+    def capture_window(self, number, left, top, width, height):
+        self.asked.append((number, left, top, width, height))
+        if self.alone is None:
+            return None
+        x, y = left - self.rect[0], top - self.rect[1]
+        part = self.alone[y:y + height, x:x + width]
+        return np.dstack([part, np.full(part.shape[:2], 255, np.uint8)])
+
+
+alone = np.full((720, 1280, 3), 25, np.uint8)
+alone[720 - frame.shape[0] - 6:714, 400:400 + frame.shape[1]] = frame
+own = (50 + 380, 30 + 720 - 40, 200, 40)                 # this app's window, on top of the EXP bar
+on_screen = np.full((800, 1400, 3), 60, np.uint8)        # the game at (50, 30), this app's window over it
+on_screen[30:750, 50:1330] = alone
+on_screen[own[1]:own[1] + own[3], own[0]:own[0] + own[2]] = 200
+
+
+def read_through(platform, screen, looks=3):
+    real_platform, real_ok = m.PLATFORM, m.tesseract_ok
+    m.PLATFORM, m.tesseract_ok = platform, False
+    try:
+        r = m.ScreenReader(m.DigitTemplates.load())
+        r.own_rect = own
+        cap = WindowCapture(FakeScreen(screen), platform, lambda: r.own_rect)
+        return [r.read(cap) for _ in range(looks)], r
+    finally:
+        m.PLATFORM, m.tesseract_ok = real_platform, real_ok
+
+
+platform = OneWindow((50, 30, 1280, 720), alone)
+got, r = read_through(platform, on_screen)
+check("pictured alone, the game's EXP bar is read with this app's window on top of it",
+      all(x.confident and x.candidates == [(68601, 71.68)] for x in got) and r.diagnostics()["capture"] == "window")
+check(f"...pictured once per look, the whole window, every part cut from that ({len(platform.asked)} pictures in 3 looks)",
+      platform.asked == [(7, 50, 30, 1280, 720)] * 3)
+
+seen_by_self = on_screen.copy()                            # this app's window happens to show an EXP bar
+seen_by_self[own[1] + 6:own[1] + 6 + frame.shape[0], own[0] + 20:own[0] + 20 + frame.shape[1]] = frame
+seen_by_self[30 + 720 - frame.shape[0] - 6:744, 450:450 + frame.shape[1]] = 25
+got, r = read_through(OneWindow((50, 30, 1280, 720), None), seen_by_self)
+check("if picturing the window alone fails, the screen is used, still without ever reading this app's own window",
+      not any(x.candidates for x in got) and r.diagnostics()["capture"] == "screen")
+got, _ = read_through(OneWindow((50, 30, 1280, 720), None), on_screen)
+check("...and it says when this app's window is covering the bar, as a screen copy does",
+      not any(x.confident for x in got) and "covering" in got[-1].where)
+
+class NoPermission(OneWindow):
+    """Nexon's Mac app is found by its program name, which macOS shows without the Screen Recording permission."""
+    def missing_permission(self):
+        return "Can't see other windows. Allow it in Screen Recording."
+
+
+got, _ = read_through(NoPermission((50, 30, 1280, 720), None), on_screen, looks=1)
+check("a game window found without the Screen Recording permission says to allow it (not 'is something covering it?')",
+      got[0].where == "Can't see other windows. Allow it in Screen Recording." and not got[0].confident)
+
+cap = WindowCapture(FakeScreen(on_screen), OneWindow((50, 30, 1280, 720), alone), lambda: own)
+cap.begin_look()
+cap.window_at(7, (50, 30, 1280, 720))
+inside, outside = cap.grab(60, 40, 100, 50), cap.grab(own[0] - 10, own[1] - 10, 50, 60)    # (past the window's bottom)
+check("a part inside the window comes from its picture; one reaching outside it is a screen copy with this app blacked out",
+      inside[1:] == (60, 40) and inside[0].shape == (50, 100, 3) and (inside[0] == alone[10:60, 10:110]).all()
+      and outside[0].shape == (60, 50, 3) and outside[0][10:50, 10:].max() == 0 and outside[0][:10].min() > 0
+      and outside[0][50:].min() > 0)
+cap.end_look()
+cap.begin_look()
+check("...and the next look starts as a screen copy until the window is pictured again",
+      not cap.sees_through_windows and cap.grab(60, 40, 100, 50)[0].shape == (50, 100, 3))
+
 game = cv2.imread(str(Path(__file__).resolve().parent.parent / "docs" / "screenshot-game.jpg"))
 got = level_ocr.read_level(game, 1052, 1044, 11.0, [s for _, s in ui_layout.candidate_scales(1080)], {})
 check(f"the real badge (Lv 32, a JPEG of the game at 1080p) is read as 32 or left unknown, never another level ({got})",
