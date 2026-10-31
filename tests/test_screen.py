@@ -659,6 +659,17 @@ check("party v3 through the reader: a held count goes to the shadow as unclear (
       _rdr._party_v3(np.full((768, 1366, 3), 60, np.uint8), None, 768) == (None, "unclear")
       and _rdr._party_last.why == "held" and _rdr._party_last.count == 4)
 
+_seen_flags = []
+_real_v3 = party_v3.read_party_v3
+party_v3.read_party_v3 = lambda img, hint=None, last=None, hsv=None, filtered=False: (_seen_flags.append(filtered), _real_v3(img, hint, last, hsv, filtered))[1]
+try:
+    for _on in (True, False):
+        _rdr._filter.state = "on" if _on else "off"
+        _rdr._party_v3(_win, cv2.cvtColor(_win, cv2.COLOR_BGR2HSV), 768)
+finally:
+    party_v3.read_party_v3 = _real_v3
+check("party v3 through the reader: told the filter is on only when ScreenReader.filtered", _seen_flags == [True, False])
+
 # ---- party v3 decides (0.9.15, Q10); today's reader is the fallback
 PL = party_v3.PartyLook
 for look, want, why in ((None, (3, None), "v3 didn't run: today's count"),
@@ -689,7 +700,7 @@ def _party_scan(look, on=True):
     real, tess = party_v3.read_party_v3, (m.TESS, m.tesseract_ok)
     m.TESS, m.tesseract_ok = None, False
     if look is not None:
-        party_v3.read_party_v3 = look if callable(look) else (lambda img, hint=None, last=None, hsv=None: look)
+        party_v3.read_party_v3 = look if callable(look) else (lambda img, hint=None, last=None, hsv=None, filtered=False: look)
     try:
         return rd, rd.read(FakeScreen(_full))
     finally:
