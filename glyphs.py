@@ -170,6 +170,8 @@ def kernels_for(scale):
 
 
 # ---------------------------------------------------------------- single cells, drawn ahead of time
+SHARP_SIGMA, SHARP_AMOUNT = 0.55, 1.1    # the game's "Default Ratio (Filter Applied)" on a drawn cell: blur radius in game pixels (x scale), and how much of the
+                                         # difference from the blurred copy is added back (same numbers as level_ocr: fitted on real filtered pairs)
 Q = 8                       # sub-pixel positions per pixel kept for cells drawn ahead of time (1/8 pixel apart)
 PAD = 2                     # spare pixels around a cell
 _bank = {}
@@ -178,10 +180,23 @@ BANK_MAX = 30000            # cells kept at most...
 BANK_MAX_BYTES = 96 << 20   # ...and at most this much memory (the bank starts again when either is passed)
 
 
-def _cell(font, ch, scale, kernel, qx, qy):
+def sharpened(p, scale):
+    """draw()'s planes with the filter's sharpening on their colour: each pixel's ink colour plus SHARP_AMOUNT times its
+    difference from the ink colour around it (blurred over the ink only: what lies behind the text is not known). -> colour [3, h, w]
+    where coverage is above zero (elsewhere 0)."""
+    sigma = SHARP_SIGMA * scale
+    cov = p[0]
+    blur_cov = cv2.GaussianBlur(cov, (0, 0), sigma, borderType=cv2.BORDER_CONSTANT)
+    ink = np.maximum(cov, 1e-6)
+    col = p[1:] / ink
+    around = np.stack([cv2.GaussianBlur(p[1 + c], (0, 0), sigma, borderType=cv2.BORDER_CONSTANT) for c in range(3)]) / np.maximum(blur_cov, 1e-6)
+    return np.clip(col + SHARP_AMOUNT * (col - around), 0, 255)
+
+
+def _cell(font, ch, scale, kernel, qx, qy, filtered=False):
     """One character's cell drawn at the sub-pixel position (qx, qy)/Q (cached): the pixels that are entirely ink
-    (ys, xs), the colour each must have, and the canvas size."""
-    key = (font.name, ch, round(scale, 4), kernel, qx, qy)
+    (ys, xs), the colour each must have, and the canvas size. filtered: the game's filter is on (the colours are sharpened)."""
+    key = (font.name, ch, round(scale, 4), kernel, qx, qy, filtered)
     got = _bank.get(key)
     if got is None:
         global _bank_bytes
@@ -192,17 +207,21 @@ def _cell(font, ch, scale, kernel, qx, qy):
         w = int(math.ceil(font.layers(ch)[0].shape[1] * scale)) + 2 * PAD + 2
         p = draw(font, ch, scale, PAD + qx / Q, PAD + qy / Q, (h, w), kernel)
         ys, xs = np.nonzero(p[0] >= 0.97)
-        got = _bank[key] = (ys, xs, (p[1:, ys, xs] / p[0, ys, xs]).T.astype(np.float32), h, w)
+        if filtered:
+            colour = sharpened(p, scale)[:, ys, xs].T
+        else:
+            colour = (p[1:, ys, xs] / p[0, ys, xs]).T
+        got = _bank[key] = (ys, xs, colour.astype(np.float32), h, w)
         _bank_bytes += ys.nbytes + xs.nbytes + got[2].nbytes
     return got
 
 
-def _eval(real, font, ch, ox, oy, scale, kernel):
+def _eval(real, font, ch, ox, oy, scale, kernel, filtered=False):
     """How well character ch drawn with its cell's corner at (ox, oy) explains the picture `real` (BGR):
     (pixels that agree, pixels judged, mean error) over the cell's sure-ink pixels, None if it lies off the picture
     or too little of it is sure."""
     fx, fy = math.floor(ox), math.floor(oy)
-    ys, xs, col, h, w = _cell(font, ch, scale, kernel, int(round((ox - fx) * Q)), int(round((oy - fy) * Q)))
+    ys, xs, col, h, w = _cell(font, ch, scale, kernel, int(round((ox - fx) * Q)), int(round((oy - fy) * Q)), filtered)
     x, y = fx - PAD, fy - PAD
     if x < 0 or y < 0 or y + h > real.shape[0] or x + w > real.shape[1] or len(ys) < MIN_SURE:
         return None
@@ -210,9 +229,9 @@ def _eval(real, font, ch, ox, oy, scale, kernel):
     return int((d <= TOL).sum()), len(ys), float(np.minimum(d, 120).mean())
 
 
-def _descend(real, font, ch, scale, kernel, tx, ty):
+def _descend(real, font, ch, scale, kernel, tx, ty, filtered=False):
     """Move the corner of a single cell to where character ch fits best (to about 1/8 pixel). -> (error, tx, ty)"""
-    cur = _eval(real, font, ch, tx, ty, scale, kernel)
+    cur = _eval(real, font, ch, tx, ty, scale, kernel, filtered)
     if cur is None:
         return None
     err = cur[2]
@@ -220,7 +239,7 @@ def _descend(real, font, ch, scale, kernel, tx, ty):
         for _ in range(6):
             best = None
             for dx, dy in ((st, 0), (-st, 0), (0, st), (0, -st)):
-                e = _eval(real, font, ch, tx + dx, ty + dy, scale, kernel)
+                e = _eval(real, font, ch, tx + dx, ty + dy, scale, kernel, filtered)
                 if e and e[2] < err - 1e-3 and (best is None or e[2] < best[0]):
                     best = (e[2], dx, dy)
             if best is None:
@@ -229,14 +248,14 @@ def _descend(real, font, ch, scale, kernel, tx, ty):
     return err, tx, ty
 
 
-def _decode(real, font, scale, kernel, tx, ty, chars, max_chars):
+def _decode(real, font, scale, kernel, tx, ty, chars, max_chars, filtered=False):
     """Read the text whose first cell's corner is at (tx, ty): one cell at a time, each must be the single best
     explanation of its pixels and then the next one is looked for. -> (text or None, why)."""
     text, pen = "", 0.0
     for k in range(max_chars + 1):
         scored = []
         for ch in chars:
-            e = _eval(real, font, ch, tx + pen * scale, ty, scale, kernel)
+            e = _eval(real, font, ch, tx + pen * scale, ty, scale, kernel, filtered)
             if e:
                 scored.append((e[0], e[0] / e[1], ch))
         if not scored:
@@ -289,7 +308,7 @@ def _peak(m, i0, i1, j0, j1):
     return v, i + di, j + dj
 
 
-def read_run(img, font, scale, origin, spread=3.0, max_chars=4, chars=None, hint=None):
+def read_run(img, font, scale, origin, spread=3.0, max_chars=4, chars=None, hint=None, filtered=False):
     """The run of characters whose first cell sits near `origin` in img, or None when it isn't certain.
 
     img: BGR picture; scale: screen pixels per game pixel; origin: where the first cell's top left corner is
@@ -297,10 +316,11 @@ def read_run(img, font, scale, origin, spread=3.0, max_chars=4, chars=None, hint
     gave before (the spot is the same, so it is tried first and costs far less).
     -> Run(text, tx, ty, why, kernel): (tx, ty) where the first cell was found (img pixels), kernel how the
     game scaled it; why: "ok", "none" (no text there), "unsure" (something is there but it doesn't explain
-    itself), "edge" (the box is cut off by the picture's edge)."""
+    itself), "edge" (the box is cut off by the picture's edge). filtered: the game's "Default Ratio (Filter Applied)" is on: the
+    characters are drawn sharpened the way it shows them (Default's drawing is untouched when False)."""
     chars = chars or font.chars
     if hint is not None and hint.text is not None:
-        text, why = _decode(img, font, scale, hint.kernel, hint.tx, hint.ty, chars, max_chars)
+        text, why = _decode(img, font, scale, hint.kernel, hint.tx, hint.ty, chars, max_chars, filtered)
         if text:
             return Run(text, hint.tx, hint.ty, "ok", hint.kernel)
     ih, iw = img.shape[:2]
@@ -330,14 +350,14 @@ def read_run(img, font, scale, origin, spread=3.0, max_chars=4, chars=None, hint
             for ch, px, py in places:
                 for gy in steps:
                     for gx in steps:
-                        e = _eval(img, font, ch, px + gx * scale, py + gy * scale, scale, kernel)
+                        e = _eval(img, font, ch, px + gx * scale, py + gy * scale, scale, kernel, filtered)
                         if e and (ch not in best or e[2] < best[ch][0]):
                             best[ch] = (e[2], px + gx * scale, py + gy * scale)
             for ch, (_, tx, ty) in sorted(best.items(), key=lambda kv: kv[1][0])[:DESCENTS]:
-                got = _descend(img, font, ch, scale, kernel, tx, ty)
+                got = _descend(img, font, ch, scale, kernel, tx, ty, filtered)
                 if not got:
                     continue
-                text, why2 = _decode(img, font, scale, kernel, got[1], got[2], chars, max_chars)
+                text, why2 = _decode(img, font, scale, kernel, got[1], got[2], chars, max_chars, filtered)
                 if text:
                     return Run(text, got[1], got[2], "ok", kernel)
                 if why2 == "unsure":
@@ -366,17 +386,17 @@ def rim_visible(img, rect, scale):
     return float(img[y0:y1, x0:x1].mean() - img[y0:y1, x2:x3].mean()) >= RIM_MIN
 
 
-def read_count(img, rect, scale, style="keyboard", hint=None, spread=3.0):
+def read_count(img, rect, scale, style="keyboard", hint=None, spread=3.0, filtered=False):
     """The number shown at the bottom left of a potion slot, or None when there is none or it isn't certain.
 
     img: BGR picture holding the slot; rect: (x, y, w, h) of the slot in img pixels; scale: screen pixels per game
     pixel (ui_layout); style: how the slot is drawn ("keyboard" or "controller": where the font asset puts the
     text in it); hint: the Run an earlier look at the same slot returned. -> (count or None, Run). Keep the Run to
-    pass back: a spot that read once is checked first next time."""
+    pass back: a spot that read once is checked first next time. filtered: the game's filter is on (see read_run)."""
     font = Font.load(COUNT_FONT)
     x, y, w, h = rect
     ox, oy = font.styles.get(style, font.styles["keyboard"])["origin"]
-    run = read_run(img, font, scale, (x + ox * scale, y + h + oy * scale), spread, MAX_DIGITS, "0123456789", hint)
+    run = read_run(img, font, scale, (x + ox * scale, y + h + oy * scale), spread, MAX_DIGITS, "0123456789", hint, filtered)
     text = run.text
     if text is None or (len(text) > 1 and text[0] == "0") or not rim_visible(img, rect, scale):
         return None, Run(None, 0.0, 0.0, run.why if text is None else "unsure", None)

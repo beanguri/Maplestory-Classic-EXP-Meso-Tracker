@@ -1441,6 +1441,19 @@ got = kind_of_look(setup=lambda r: (setattr(r, "_read_potion_bar", lambda *a, **
 check("health: a potion bar look with a count it couldn't read is noted as not read", got.tries == (("potions", False),))
 check("health: ...and a seen bar gives the look its layout and UI size", got.layout == "keyboard")
 
+# F09: the potion bar is read as filtered exactly when the reader's filter state is on (Default Ratio (Filter Applied))
+real_filtered, real_read_potions, flags = m.ScreenReader.filtered, potion_bar.read_potions, []
+potion_bar.read_potions = lambda *a, **k: (flags.append(k.get("filtered")), potion_bar.NOT_SEEN)[1]
+try:
+    for on in (True, False):
+        m.ScreenReader.filtered = property(lambda self, on=on: on)
+        r = part_reader()
+        r._read_potion_bar(FakeScreen(np.zeros((1080, 1920, 3), np.uint8)), (0, 0, 1920, 1080), [])
+finally:
+    m.ScreenReader.filtered, potion_bar.read_potions = real_filtered, real_read_potions
+check(f"the reader reads the potion bar as filtered exactly when its filter state is on ({flags})", flags == [True, False])
+
+
 # A04 audit: every way out of a look sets exp_kind itself, and the looks add up in the health record
 r = part_reader()
 r._game_rect = lambda: None
