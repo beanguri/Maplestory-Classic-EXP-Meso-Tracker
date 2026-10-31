@@ -839,6 +839,54 @@ for label, damage in (
         ("the mouse cursor over a tile", lambda p, b: cv2.circle(p, (b[0] + b[2] // 4, b[1] + b[3] // 2), max(2, b[3] // 3), (255, 255, 255), -1))):
     wrong = over_the_tile(damage)
     check(f"{label}: right or unknown, never a wrong level ({wrong or 'none wrong'})", not wrong)
+# ---- "Default Ratio (Filter Applied)": the game sharpens the whole picture; with the filter known to be on the digits are drawn sharpened
+def filtered_pic(pic, scale, sigma=level_ocr.SHARP_SIGMA, amount=level_ocr.SHARP_AMOUNT):
+    """The picture the way the filter draws it: an unsharp mask on every channel, the blur growing with the UI scale."""
+    f = pic.astype(np.float32)
+    return np.clip(f + amount * (f - cv2.GaussianBlur(f, (0, 0), sigma * scale, borderType=cv2.BORDER_REPLICATE)), 0, 255).astype(np.uint8)
+
+
+filt_wrong, filt_unknown, plain_wrong = [], [], []
+for scale in (1.40625, 1.5625, 1.875, 2.8125):
+    for level in (10, 25, 36, 47, 58, 69, 80, 91, 100, 234):
+        pic, x0, cy = badge_scene(level, 7 * scale, scale=scale)
+        sharp = filtered_pic(pic, scale)
+        got = level_ocr.read_level(sharp, x0, cy, 7 * scale, [scale], {}, True)
+        if got is None:
+            filt_unknown.append((scale, level))
+        elif got != level:
+            filt_wrong.append((scale, level, got))
+        got = level_ocr.read_level(sharp, x0, cy, 7 * scale, [scale], {})        # (the Default reading of a filtered picture)
+        if got is not None and got != level:
+            plain_wrong.append((scale, level, got))
+check(f"filtered: every digit is read at 1.41, 1.56, 1.88 and 2.81 (wrong {filt_wrong or 'none'}, unknown {filt_unknown or 'none'})",
+      not filt_wrong and not filt_unknown)
+check(f"...the Default reading of a filtered picture is unknown or right, never wrong ({plain_wrong or 'none wrong'})", not plain_wrong)
+mix = []
+for scale in (1.40625, 1.5625, 1.875, 2.8125, 3.75):          # (filtered reading of a Default picture, and of a filter that sharpens a bit differently)
+    for level in (10, 25, 36, 47, 58, 69, 80, 91, 100, 234):
+        pic, x0, cy = badge_scene(level, 7 * scale, scale=scale)
+        for what, seen in (("Default", pic), ("softer", filtered_pic(pic, scale, 0.4, 0.9)), ("harder", filtered_pic(pic, scale, 0.8, 1.5)),
+                           ("wider", filtered_pic(pic, scale, 1.2, 1.1))):
+            got = level_ocr.read_level(seen, x0, cy, 7 * scale, [scale], {}, True)
+            if got is not None and got != level:
+                mix.append((what, scale, level, got))
+check(f"filtered reading of a Default picture or of a filter that sharpens differently: right or unknown, never wrong ({mix or 'none wrong'})", not mix)
+sharp_wrong = []
+for scale in (1.40625, 1.875):
+    for label, damage in (
+            ("window", lambda p, b: cv2.rectangle(p, (b[0] + b[2] // 2, b[1]), (b[0] + b[2], b[1] + b[3]), (40, 40, 40), -1)),
+            ("beside", lambda p, b: cv2.rectangle(p, (b[0] + b[2] + 1, b[1]), (b[0] + b[2] + 6, b[1] + b[3]), (255, 255, 255), -1)),
+            ("cursor", lambda p, b: cv2.circle(p, (b[0] + b[2] // 4, b[1] + b[3] // 2), max(2, b[3] // 3), (255, 255, 255), -1)),
+            ("grain", lambda p, b: np.clip(p + np.random.default_rng(3).normal(0, 60, p.shape), 0, 255).astype(np.uint8))):
+        for level in (1, 7, 32, 58, 99, 100, 250):
+            pic, x0, cy = badge_scene(level, 7 * scale, scale=scale)
+            box = (int(x0 - 53.6 * 7 * scale), int(cy + 0.2 * 7 * scale), int((12 * len(str(level)) - 1) * scale), int(13 * scale))
+            got = level_ocr.read_level(filtered_pic(damage(pic, box), scale), x0, cy, 7 * scale, [scale], {}, True)
+            if got is not None and got != level:
+                sharp_wrong.append((label, scale, level, got))
+check(f"filtered: a window, a white mark beside the tiles, the cursor or heavy grain over the badge: never a wrong level ({sharp_wrong or 'none wrong'})",
+      not sharp_wrong)
 # an orange square near some other white marks isn't the badge: its "LV." has to be as wide as the game's
 short, good = badge_scene(17, 14, label_width=1.3), badge_scene(17, 14)
 check("a badge whose LV mark is too short is refused (other orange icons have short marks near them)",
@@ -914,6 +962,17 @@ class CountReads:
         return self.real(*args, **kw)
 
 
+class Spy(CountReads):
+    """CountReads that also keeps the last argument of every badge reading: the filter flag."""
+    def __init__(self):
+        super().__init__()
+        self.flags = []
+
+    def __call__(self, *args, **kw):
+        self.flags.append(args[-1])
+        return super().__call__(*args, **kw)
+
+
 real_monotonic = m.time.monotonic
 clock = [100.0]
 m.time.monotonic = lambda: clock[0]
@@ -950,6 +1009,19 @@ try:
         r._read_level(screen, rect)
         check("this window covering the badge: nothing is read, and it says so",
               says.runs == 0 and r.level is None and "covering" in r.level_look["why"] and r.badge_covered)
+
+    # the reader hands the filter's state to the badge reading, and only "on" counts
+    real_filtered, flags = m.ScreenReader.filtered, []
+    for on in (True, False):
+        m.ScreenReader.filtered = property(lambda self, on=on: on)
+        try:
+            with Spy() as spy:
+                r, screen, rect = level_reader(32)
+                r._read_level(screen, rect)
+            flags += spy.flags
+        finally:
+            m.ScreenReader.filtered = real_filtered
+    check(f"the reader reads the badge as filtered exactly when its filter state is on ({flags})", flags == [True, False])
 
     # the character's name: a print is taken every few seconds, even without Tesseract, and kept only in memory
     def named(name):
