@@ -252,6 +252,7 @@ jobs:
         with:
           pattern: "*.zip"
           merge-multiple: true
+          skip-decompress: true     # (a .zip would be unpacked otherwise: the download itself must arrive)
           path: files
       - name: Check every file against its own job's checksum, and put the checksums together
         shell: bash
