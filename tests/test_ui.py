@@ -829,7 +829,7 @@ app.set_compact(False)
 app.set_no_reset(True)
 check("it's remembered after a restart", m.load_config()["no_reset"] is True)
 app.set_no_reset(False)
-app.no_reset_note = None        # (its 8-second note would stand in for the status checks below on a slow machine)
+app.no_reset_note = app.hotkey_note = None     # (their few-second notes would stand in for the status checks below on a slow machine)
 
 # ---- potion prices in Settings
 app.cfg["potion_prices"] = {}
