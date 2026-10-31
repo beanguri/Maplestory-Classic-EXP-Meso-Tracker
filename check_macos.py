@@ -170,7 +170,7 @@ def check_launch(dmg, seconds=12):
 
 
 def main():
-    app, dmg = Path(sys.argv[1]), Path(sys.argv[2])
+    app, dmg = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()      # (full paths, as the app has them)
     with open(app / "Contents" / "Info.plist", "rb") as f:
         info = plistlib.load(f)
     min_os = info["LSMinimumSystemVersion"]
