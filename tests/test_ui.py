@@ -1110,6 +1110,12 @@ for _ in range(12):
     app._handle(pct_at(50.0, 150))
 check(f"A13-2: a level over the table is said as it is, not as trouble reading ({app.status.get()!r})",
       app.rejected == 0 and "150" in app.status.get() and "trouble" not in app.status.get())
+app.reset()
+just_up = blank._replace(where="Reading", candidates=[(144, 0.04)], confident=True, text="144 [0.04%]")
+for _ in range(12):                                     # just levelled up: too little % to learn the level's EXP from
+    app._handle(just_up)
+check(f"a bar read clearly right after a level-up is calibrating, not a misread ({app.rejected}, {app._state()})",
+      app.rejected == 0 and "trouble" not in app.status.get() and app._state()[0] != "alert")
 
 # ---- A13-4: a badge covered by a window counts as a failure, so the fallback is offered and the status says why
 app.reset()

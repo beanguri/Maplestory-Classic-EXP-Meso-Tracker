@@ -5956,6 +5956,7 @@ class App:
                 self.level_wait, self.pct_note = False, ""
                 self._char_print = self.reader.name_print if self.reader.name_print is not None else self._char_print
             waiting = r.percent_only and self.pct_note.startswith(PCT_WAIT_NOTES)    # (a %-only bar waiting for its level isn't misread)
+            waiting = waiting or note.startswith("calibrating")    # (nor is a bar too near 0% to learn the level's EXP from)
             self.rejected = 0 if ok or self.level_wait or waiting else self.rejected + 1
             if self.rejected >= 10:                 # keeps not adding up: find the EXP bar again
                 self.reader.box, self.rejected = None, 0
