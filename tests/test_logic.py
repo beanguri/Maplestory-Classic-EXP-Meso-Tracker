@@ -298,6 +298,27 @@ for hostile in ("[" * 50000, "\n" * 50000, "\r\n" * 25000, "[a](" * 12500):
     slow = max(slow, _t.perf_counter() - t0)
 check("release notes made of one character repeated 50,000 times are cleaned in well under a second", slow < 1.0)
 check("...and a huge answer is cut before it is cleaned", len(m._plain_text("a" * 10_000_000)) <= 5000)
+# M05: the release body with three files (Windows zip + two .dmg) and the "Check this download" list, as build.yml's release job writes it
+_h = ["a1" * 32, "b2" * 32, "c3" * 32]
+_f = ["Maple-Classic-Exp-Overlay-v0.9.16-beta.zip", "Maple-Classic-Exp-Overlay-v0.9.16-beta-macOS-AppleSilicon.dmg",
+      "Maple-Classic-Exp-Overlay-v0.9.16-beta-macOS-Intel.dmg"]
+_body = ("**What's new**\r\n- **No Reset** keeps your numbers across maps, see [README](https://x/README.md)\r\n"
+         + "- more lines of notes\r\n" * 40
+         + "\r\n**A test download for Mac, not a release.** Not tested by me on a real Mac.\r\n\r\n---\r\n**Check this download**\r\n"
+         + "".join(f"- SHA-256 of {n}: `{h}` (also in SHA256SUMS.txt)\r\n" for n, h in zip(_f, _h))
+         + "- On Windows, in PowerShell: `Get-FileHash .\\<the file>`. On a Mac, in Terminal: `shasum -a 256 <the file>`\r\n"
+         "- Built by GitHub from this tag. Check a file: `gh attestation verify <the file> --repo beanguri/Maple-Classic-Exp-Overlay`\r\n"
+         "- The same files are on [the build's page](https://github.com/beanguri/Maple-Classic-Exp-Overlay/actions/runs/1), where GitHub shows the same SHA-256 for each.")
+_plain = m._plain_text(_body)
+_lines = _plain.split("\n")
+check("a release body with three files shows every file name and its full hash, one per line",
+      all(f"• SHA-256 of {n}: {h} (also in SHA256SUMS.txt)" in _lines for n, h in zip(_f, _h)))
+check("...with no markdown marks (**, backticks, link addresses) left in it",
+      "**" not in _plain and "`" not in _plain and "](" not in _plain and "https://x" not in _plain)
+check("...the commands in it still read right", "Get-FileHash .\\<the file>" in _plain and "shasum -a 256 <the file>" in _plain
+      and "gh attestation verify <the file> --repo beanguri/Maple-Classic-Exp-Overlay" in _plain)
+check("...a Mac test build's note stays in", "A test download for Mac, not a release. Not tested by me on a real Mac." in _lines)
+check("...and the whole check list fits under the 5000-character cut", len(_plain) < 5000 and _lines[-1].startswith("• The same files are on the build's page"))
 
 
 def _update_answer(tag, body="notes"):
