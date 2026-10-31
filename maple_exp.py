@@ -756,10 +756,15 @@ def _v2_text_mask(V, width=None, tiled=False):
     return D >= V2_TEXT * top, D >= (V2_FAINT / 2 if tiled else V2_FAINT) * top
 
 
-def _v2_has_feet(V, b):
+V2_SIDE = 2             # px each side of a bracket that its feet test looks at...
+V2_SIDE_FILTERED = 1    # ...and with the game's filter on (the sharpened digit next to "[" is one px closer, F04)
+
+
+def _v2_has_feet(V, b, side=V2_SIDE):
     """True if the stroke at blob b has short feet: more brightness in its top and bottom fifth than in
-    its middle (a digit "1" or a letter "l" has a plain end)."""
-    x0, x1 = max(0, b.x - 2), b.x + b.w + 2
+    its middle (a digit "1" or a letter "l" has a plain end). `side` px on each side of it are looked at: the
+    digit next to a bracket must not reach in and fill its middle."""
+    x0, x1 = max(0, b.x - side), b.x + b.w + side
     win = V[max(0, b.y - 1):b.y + b.h + 1, x0:x1].astype(np.float32)
     win = (win - win.min(axis=1, keepdims=True)).sum(axis=1)[1:-1]
     z = max(2, int(round(0.2 * len(win))))
@@ -768,7 +773,7 @@ def _v2_has_feet(V, b):
     return min(win[:z].mean(), win[-z:].mean()) >= 1.12 * max(float(np.median(win[z:-z])), 1.0)
 
 
-def _v2_bracket_side(sub, V, b):
+def _v2_bracket_side(sub, V, b, side=V2_SIDE):
     """'[' or ']' if the blob mask (bool, h x w) is a thin vertical stroke with feet at the top and the
     bottom pointing inwards; '|' if the feet are there but the side can't be told (a small or blurred
     bracket); else None."""
@@ -778,7 +783,7 @@ def _v2_bracket_side(sub, V, b):
     col = sub.sum(axis=0)
     half = max(1, (w + 1) // 2)
     left, right = col[:half].max(), col[w - half:].max()
-    if max(left, right) < 0.7 * h or not _v2_has_feet(V, b):
+    if max(left, right) < 0.7 * h or not _v2_has_feet(V, b, side):
         return None
     if left >= 0.7 * h and right <= 0.5 * h:
         return "["
@@ -823,12 +828,13 @@ def _v2_percent_glyph(_cache=[]):
     return _cache[0]
 
 
-def find_exp_v2(bgr, hint=None, spots=(), whole=True):
+def find_exp_v2(bgr, hint=None, spots=(), whole=True, filtered=False):
     """Locate the EXP text in a screenshot by shape and contrast, not colour. Returns a Layout
     (the same as find_exp) or None. hint is a box (x0, y0, x1, y1) where the bar was last seen: it
     is searched first (the Layout's box and cy say where it was found, to remember for next time).
     spots are boxes where the bar should be at each UI scale the game might use (exp_font.expected_spots):
-    tried next, cheap, before the whole picture is searched (whole=False: never search it, only those boxes)."""
+    tried next, cheap, before the whole picture is searched (whole=False: never search it, only those boxes).
+    filtered: the game's filter is on (ScreenReader.filtered): the bracket test is a little tighter around the bracket."""
     if bgr.size == 0:
         return None
     if bgr.ndim == 2 or (bgr.ndim == 3 and bgr.shape[2] == 1):      # (a grey or BGRA picture is read like a BGR one)
@@ -838,13 +844,13 @@ def find_exp_v2(bgr, hint=None, spots=(), whole=True):
     elif bgr.shape[2] > 3:
         bgr = bgr[:, :, :3]
     for box in ([hint] if hint is not None else []) + list(spots or ()):
-        lay = _find_exp_v2_in(bgr, box)
+        lay = _find_exp_v2_in(bgr, box, filtered)
         if lay:
             return lay
-    return _find_exp_v2(bgr) if whole else None
+    return _find_exp_v2(bgr, None, filtered) if whole else None
 
 
-def _find_exp_v2_in(bgr, box):
+def _find_exp_v2_in(bgr, box, filtered=False):
     """The Layout found inside one box of the picture (in the whole picture's coordinates), or None."""
     H, W = bgr.shape[:2]
     try:
@@ -854,7 +860,7 @@ def _find_exp_v2_in(bgr, box):
         return None
     if x1 - x0 <= 8 or y1 - y0 <= 8:
         return None
-    lay = _find_exp_v2(bgr[y0:y1, x0:x1], W)
+    lay = _find_exp_v2(bgr[y0:y1, x0:x1], W, filtered)
     if not lay:
         return None
     V = np.zeros(bgr.shape[:2], np.float32)         # only the searched box is filled in: all the digits need
@@ -864,7 +870,7 @@ def _find_exp_v2_in(bgr, box):
     return Layout(lay.gh, lay.cy + y0, sh(lay.exp), sh(lay.pct), (b[0] + x0, b[1] + y0, b[2] + x0, b[3] + y0), V)
 
 
-def _v2_bracket_candidates(mask, V8, have):
+def _v2_bracket_candidates(mask, V8, have, side=V2_SIDE):
     """Brackets in a text mask: thin tall blobs that have a partner of the same height to their right on
     the same line (and whose feet and stroke look right). Skips ones already in have."""
     n, glabels, stats, _ = cv2.connectedComponentsWithStats(mask.view(np.uint8), connectivity=8)
@@ -882,35 +888,36 @@ def _v2_bracket_candidates(mask, V8, have):
         b = Blob(int(i), *map(int, stats[i][:4]))
         if any(abs(k.x - b.x) <= 2 and abs(k.y - b.y) <= 2 for k, _ in have):
             continue
-        side = _v2_bracket_side(glabels[b.y:b.y + b.h, b.x:b.x + b.w] == b.i, V8, b)
-        if side:
-            out.append((b, side))
+        kind = _v2_bracket_side(glabels[b.y:b.y + b.h, b.x:b.x + b.w] == b.i, V8, b, side)
+        if kind:
+            out.append((b, kind))
     return out
 
 
-def _find_exp_v2(bgr, width=None):
+def _find_exp_v2(bgr, width=None, filtered=False):
     """(width: the whole screen's width where bgr is only a box of it; it sets the size of the blur.)"""
-    lay = _find_exp_v2_try(bgr, width, False)
+    lay = _find_exp_v2_try(bgr, width, False, filtered)
     if lay is None:
         # Text that is a tiny share of the picture (the small UI on a big screen: a very wide strip) is not
         # what the 99.7th percentile sees: look again asking each stretch alone, and on a very wide strip
         # also with the small blur (the big one runs the text's soft edges together).
-        lay = _find_exp_v2_try(bgr, width, True)
+        lay = _find_exp_v2_try(bgr, width, True, filtered)
         if lay is None and (width or bgr.shape[1]) >= V2_WIDE:
-            lay = _find_exp_v2_try(bgr, 1, True)
+            lay = _find_exp_v2_try(bgr, 1, True, filtered)
     return lay
 
 
-def _find_exp_v2_try(bgr, width, tiled):
+def _find_exp_v2_try(bgr, width, tiled, filtered=False):
     V8 = _v2_brightness(bgr)
     masks = _v2_text_mask(V8, width, tiled)
     if masks is None:
         return None
     low, faint = masks
-    brackets = _v2_bracket_candidates(low, V8, [])
+    side = V2_SIDE_FILTERED if filtered else V2_SIDE
+    brackets = _v2_bracket_candidates(low, V8, [], side)
     lay = _v2_pair_up(low, V8, brackets)
     if lay is None:                    # a blur can cut the paler brackets short: look again with the softer mask
-        brackets += _v2_bracket_candidates(faint, V8, brackets)
+        brackets += _v2_bracket_candidates(faint, V8, brackets, side)
         lay = _v2_pair_up(low, V8, brackets)
     return lay
 
@@ -1949,7 +1956,7 @@ class ScreenReader:
         self.error_types = Counter()        # ...and by exception type name (never the message)
         self.part_failed_at = {}            # part -> when it last failed, until a later try works
         self._part_logged = {}              # part -> (when errors.log last heard of it, failures skipped since)
-        self.shadow = shadow.Shadow(find_exp_v2, digits_v2.read_layout_v2, fits_exp_table, exp_font.load, _view,
+        self.shadow = shadow.Shadow(self._find_exp_v2, digits_v2.read_layout_v2, fits_exp_table, exp_font.load, _view,
                                     lambda exc: self._part_failed("reader v2", exc),      # reader v2, beside this one
                                     nobar_seconds=shadow.NOBAR_BY_PART["exp"])
         self.shadow.main = True             # EXP: v2's answer decides, this reader's is the backup (_v2_decides)
@@ -1971,6 +1978,10 @@ class ScreenReader:
     @property
     def filtered(self):
         return self._filter.filtered
+
+    def _find_exp_v2(self, *args, **kwargs):
+        """find_exp_v2 told whether the game's filter is on (shadow.Shadow calls this)."""
+        return find_exp_v2(*args, filtered=self.filtered, **kwargs)
 
     @contextlib.contextmanager
     def _part(self, part):
