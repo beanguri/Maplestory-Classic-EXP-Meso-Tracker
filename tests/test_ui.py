@@ -809,8 +809,9 @@ check("the Settings switch turns it on too, the main window's switch follows",
       app.cfg["no_reset"] is True and app.view.no_reset.on is True)
 app.view.no_reset.toggle()
 check("...and the main window's switch moves the Settings one", app._no_reset_var.get() is False and app.cfg["no_reset"] is False)
-check("Hotkeys in Settings has a No Reset row, off by default", "no_reset" in app._hotkey_ui["buttons"]
-      and app.cfg["hotkeys"]["no_reset"] == "")
+if app.hotkeys.supported:                               # (no hotkeys on a Mac: no Hotkeys section)
+    check("Hotkeys in Settings has a No Reset row, off by default", "no_reset" in app._hotkey_ui["buttons"]
+          and app.cfg["hotkeys"]["no_reset"] == "")
 app.settings_win.destroy()
 app.settings_win = None
 app.set_no_reset(True)
@@ -828,6 +829,7 @@ app.set_compact(False)
 app.set_no_reset(True)
 check("it's remembered after a restart", m.load_config()["no_reset"] is True)
 app.set_no_reset(False)
+app.no_reset_note = None        # (its 8-second note would stand in for the status checks below on a slow machine)
 
 # ---- potion prices in Settings
 app.cfg["potion_prices"] = {}
