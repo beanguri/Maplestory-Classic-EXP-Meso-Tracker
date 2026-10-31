@@ -279,9 +279,18 @@ py -3 -m pip install -r requirements.txt
 run.bat
 ```
 
-**On macOS** (from source only, with the game running through CrossOver, Whisky, Parallels or a game stream): macOS support was written by thanhphamvan, who tried it on a real Mac with the game. I don't own a Mac, so I can't test it myself: GitHub's automatic tests run on a real Mac, but not with the game. If you try it, please tell me how it goes.
+**On macOS** (with the game running through CrossOver, Whisky, Parallels or a game stream): macOS support was written by thanhphamvan, and the Mac download comes from fabriciorby's work; both tried it on a real Mac with the game. **I don't own a Mac, so I haven't tested it myself**: GitHub's automatic tests run on a real Mac, but not with the game. Until Mac players tell me it works, treat it as a test. If you try it, please tell me how it goes.
 
-**How to run it on a Mac:** `brew install tesseract`, then `python3 -m pip install -r requirements.txt` and `python3 maple_exp.py`. The first time, allow your Terminal (or Python) in **System Settings > Privacy & Security > Screen Recording**, then start it again. The window is found by "MapleStory" in its title; if it isn't, use **Select area**. Hotkeys aren't available on macOS yet.
+**The download** (needs macOS 14 or newer): on the [Releases page](../../releases) pick the file for your Mac. Not sure which? Apple menu > About This Mac: **Apple M1/M2/M3/M4** = `...-macOS-AppleSilicon.dmg`, **Intel** = `...-macOS-Intel.dmg`. Open it and drag **Maple Classic Exp Overlay** onto Applications. Hotkeys aren't available on macOS yet.
+
+**The first time you open it**, macOS says it can't check the app for malware (it isn't signed with an Apple developer account). To allow it:
+1. Open the app once (it is refused).
+2. **System Settings > Privacy & Security**, scroll down to "Maple Classic Exp Overlay was blocked", click **Open Anyway**, and confirm.
+3. If that button doesn't show up, run this in Terminal once, then open the app again: `xattr -dr com.apple.quarantine "/Applications/Maple Classic Exp Overlay.app"`
+
+**Screen Recording:** the overlay reads the game from the screen, so allow it in **System Settings > Privacy & Security > Screen Recording**, then start it again. macOS may ask again after an update. The window is found by "MapleStory" in its title; if it isn't, use **Select area**.
+
+**From source** (the other way, also works on Windows): `brew install tesseract`, then `python3 -m pip install -r requirements.txt` and `python3 maple_exp.py`. Allow your Terminal (or Python) in Screen Recording instead of the app.
 
 Everything that differs between Windows and macOS (finding the game window, screen scaling, hotkeys, the one-copy-at-a-time lock) is in `platforms/`: one `Platform` interface in `base.py`, one implementation per OS, and `create_platform()` picks the one for the OS it's on.
 
