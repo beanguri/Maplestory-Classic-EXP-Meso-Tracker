@@ -77,6 +77,7 @@ PLATFORM.setup_process()
 cv2.setNumThreads(1)
 
 VERSION = "0.9.15-beta"
+TEST_BUILD_MARK = "-mactest"         # a Mac test build calls itself e.g. 0.9.16-mactest.1 and sends nothing
 WINDOW_TITLE = "Maple Classic Exp Overlay"    # the version is shown in Settings
 OLD_TITLES = ("Maple EXP/hr",)               # what versions before 0.9.3 were called
 
@@ -477,7 +478,11 @@ def post_runs(install, runs, timeout=15):
 
 def sharing_blocked():
     """True while testing: MAPLE_EXP_DATA moves the data folder, which only tests do, and what a test holds is
-    made up, so nothing is sent unless MAPLE_EXP_ALLOW_SHARE says so."""
+    made up, so nothing is sent unless MAPLE_EXP_ALLOW_SHARE says so. Also always true in a Mac test build (its
+    VERSION has TEST_BUILD_MARK, put there by release_plan.py): that one sends and checks nothing, whatever
+    MAPLE_EXP_ALLOW_SHARE says."""
+    if TEST_BUILD_MARK in VERSION:
+        return True
     return bool(os.environ.get("MAPLE_EXP_DATA") and not os.environ.get("MAPLE_EXP_ALLOW_SHARE"))
 
 

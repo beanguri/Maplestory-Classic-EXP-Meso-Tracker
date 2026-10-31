@@ -1,18 +1,29 @@
-# Builds the Windows download on GitHub from this code. Release downloads only ever come from
-# here (never from someone's own PC), so anyone can check where a download came from.
+# Builds the downloads on GitHub from this code. Release downloads only ever come from here (never from
+# someone's own PC), so anyone can check where a download came from.
 #
-# - Pushing a version tag (e.g. v0.9.10-beta) builds it, signs the .exe once SignPath is set
-#   up, records a signed attestation (this workflow built this zip from this commit), checks
-#   that attestation itself, and makes a DRAFT release with the zip and its SHA-256. A person
-#   reads it over and publishes it. A release that's already published is never changed from
-#   here.
-# - "Run workflow" (Actions tab) just builds, and leaves the zip on the run's page.
+# Jobs (each one only does its own part):
+#   plan     reads the tag and says what this run makes (release_plan.py): checks the tag against the program's
+#            VERSION and server/src/released.js, or gives a Mac test build its own version.
+#   build    Windows: tests, builds, signs the .exe once SignPath is set up, keeps the zip. Read-only token.
+#   macos    Mac (Apple Silicon and Intel): builds Tesseract, tests, builds the .dmg, checks it. Read-only token.
+#   release  puts every file together: one SHA256SUMS.txt, a signed attestation for each file (this workflow built
+#            it from this commit), checks the attestations itself, and makes ONE DRAFT release with all the files.
+#            A person reads it over and publishes it. It never uses --clobber and never changes a release that
+#            already exists (published or draft): it stops with an error instead. It has no checkout and runs no
+#            repo code: the jobs that install packages and run tests can't write a release or sign anything.
 #
-# The zip is kept on the run's page as it is (not wrapped in another zip, which GitHub does
-# to artifacts unless told not to), so the SHA-256 shown there is the zip's own SHA-256: the
-# same as SHA256SUMS.txt and the release page.
+# Tags:
+#   v0.9.16-beta             Windows zip + both Mac .dmg files in one draft release. The tag must match VERSION in
+#                            maple_exp.py, and VERSION must be listed in server/src/released.js.
+#   mac-test-v0.9.16-beta.1  Macs only, a draft PRE-release (never "latest"). The build calls itself 0.9.16-mactest.1
+#                            and sends nothing (maple_exp.sharing_blocked), so a test download can't reach mcwo.app.
+#   "Run workflow" (Actions tab) on a branch: builds and leaves the files on the run's page; no release.
 #
-# Check a download:   gh attestation verify <the zip> --repo beanguri/Maple-Classic-Exp-Overlay
+# The files are kept on the run's page as they are (not wrapped in another zip, which GitHub does to artifacts
+# unless told not to), so the SHA-256 shown there is the file's own SHA-256: the same as SHA256SUMS.txt and the
+# release page.
+#
+# Check a download:   gh attestation verify <the file> --repo beanguri/Maple-Classic-Exp-Overlay
 #
 # Signing switches on once SignPath has accepted the project: add the secret
 # SIGNPATH_API_TOKEN and the variable SIGNPATH_ORGANIZATION_ID (Settings > Secrets and
@@ -24,39 +35,47 @@ name: Build
 on:
   workflow_dispatch:
   push:
-    tags: ["v*"]
+    tags: ["v*", "mac-test-v*"]
 
 permissions:
   contents: read
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}          # release | mactest | branch
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}    # what the Mac build must call itself
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: What this run makes (the tag matches the program's version, and the site knows it)
+        id: plan
+        shell: bash
+        run: |
+          if ! python3 release_plan.py plan "$GITHUB_REF_TYPE" "$GITHUB_REF_NAME" > plan.txt; then
+            cat plan.txt
+            exit 1
+          fi
+          cat plan.txt
+          cat plan.txt >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
+    if: needs.plan.outputs.kind != 'mactest'
     runs-on: windows-latest
     permissions:
-      contents: write             # the draft release (version tags only)
-      id-token: write             # signing the attestation
-      attestations: write
-      artifact-metadata: write
+      contents: read              # nothing here writes a release or signs an attestation (the release job does)
     env:
       SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - name: The tag matches the program's version
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          version=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' maple_exp.py)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::The tag is $GITHUB_REF_NAME but maple_exp.py says VERSION = $version. Fix one, and tag again."
-            exit 1
-          fi
-          # mcwo.app takes runs and reports only from the versions in server/src/released.js.
-          if ! grep -qF "\"$version\"" server/src/released.js; then
-            echo "::error::VERSION $version is missing from server/src/released.js: add it, deploy the site before Publish, and tag again."
-            exit 1
-          fi
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version: "3.10"
@@ -72,6 +91,7 @@ jobs:
           python tests/test_report.py
           python tests/test_health.py
           python tests/test_v2.py
+          python tests/test_release.py
       - name: Build
         run: python build.py
       - name: Keep the unsigned build
@@ -99,84 +119,26 @@ jobs:
         shell: bash
         run: |
           cd release
-          sha256sum --text *.zip | tee SHA256SUMS.txt
+          sha256sum --text *.zip | tee SHA256SUMS-Windows.txt
           echo "zip=release/$(ls *.zip)" >> "$GITHUB_OUTPUT"
-          { echo "### The download"; echo; echo '```'; cat SHA256SUMS.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - name: Record where the download came from (attestation)
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
-        with:
-          subject-path: ${{ steps.sum.outputs.zip }}
-      - name: Check the attestation (the build proves itself)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ZIP: ${{ steps.sum.outputs.zip }}
-        run: |
-          for try in 1 2 3 4 5 6; do
-            if gh attestation verify "$ZIP" --repo "$GITHUB_REPOSITORY" \
-                 --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build.yml"; then
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::The attestation doesn't verify."
-          exit 1
+          { echo "### The Windows download"; echo; echo '```'; cat SHA256SUMS-Windows.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Keep the download on this run's page (the zip itself, not wrapped in another zip)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           path: ${{ steps.sum.outputs.zip }}
           archive: false
-      - name: Keep the checksum on this run's page
+      - name: Keep its checksum on this run's page
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
-          path: release/SHA256SUMS.txt
+          path: release/SHA256SUMS-Windows.txt
           archive: false
-      - name: Draft the release
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-          ZIP: ${{ steps.sum.outputs.zip }}
-        run: |
-          name=$(basename "$ZIP")
-          hash=$(sha256sum "$ZIP" | cut -d' ' -f1)
-          title="Maple Classic Exp Overlay $(echo "$TAG" | sed -E 's/-beta$/ (beta)/')"
-          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          cat > notes.md <<'EOF'
-          (Notes to come.)
-
-          ---
-          **Check this download**
-          - SHA-256 of __NAME__: `__HASH__` (also in SHA256SUMS.txt). In PowerShell: `Get-FileHash .\__NAME__`
-          - Built by GitHub from this tag, not on a PC. Check it with the GitHub CLI: `gh attestation verify __NAME__ --repo __REPO__`
-          - The same file is on [the build's page](__RUN__), where GitHub shows the same SHA-256.
-          EOF
-          sed -i -e "s|__NAME__|$name|g" -e "s|__HASH__|$hash|g" -e "s|__REPO__|$GITHUB_REPOSITORY|g" -e "s|__RUN__|$run|g" notes.md
-          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
-          if [ "$state" = "none" ]; then
-            gh release create "$TAG" "$ZIP" release/SHA256SUMS.txt --draft --verify-tag --title "$title" --notes-file notes.md
-          elif [ "$state" = "true" ]; then
-            gh release upload "$TAG" "$ZIP" release/SHA256SUMS.txt --clobber
-            if gh release view "$TAG" --json body --jq .body | grep -q '(Notes to come.)'; then
-              gh release edit "$TAG" --notes-file notes.md
-            else
-              echo "::warning::The draft's notes were already written. If they show a SHA-256, update it to: $hash"
-            fi
-          else
-            echo "::warning::$TAG is already published, so it's left as it is. The build is on this run's page."
-            exit 0
-          fi
-          # What's on the draft must be exactly what was built.
-          mkdir check
-          gh release download "$TAG" --pattern "$name" --dir check
-          (cd check && sha256sum --check ../release/SHA256SUMS.txt)
 
   macos:
     # The Mac downloads: a .dmg for Apple Silicon and one for Intel, made by build_macos.py with its own Tesseract
     # (built here from pinned sources for macOS 14 and up: Homebrew's needs the runner's own, much newer macOS),
     # then checked by check_macos.py with Homebrew moved aside. Read-only on purpose: this job installs and builds
     # things, so it can't write a release or sign an attestation (the release job does that, from these files).
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
@@ -202,6 +164,14 @@ jobs:
           python tests/test_logic.py
           python tests/test_ocr.py
           python tests/test_v2.py
+          python tests/test_release.py
+      - name: Give the Mac test build its own version (and prove it sends nothing)
+        if: needs.plan.outputs.kind == 'mactest'
+        env:
+          TEST_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          python release_plan.py set-version "$TEST_VERSION"
+          python tests/test_release.py
       - name: Build
         env:
           TESSERACT_PREFIX: ${{ runner.temp }}/tess
@@ -246,3 +216,145 @@ jobs:
             build/macos/screen-*.png
             build/macos/work/*/warn-*.txt
           if-no-files-found: warn
+
+  release:
+    # Only runs when everything it needs was built (a Mac test run has no Windows build: skipped on purpose).
+    # No checkout and no repo code here: it only handles the files the other jobs made.
+    needs: [plan, build, macos]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.macos.result == 'success' && (needs.build.result == 'success' || (needs.plan.outputs.kind == 'mactest' && needs.build.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write             # the draft release (tags only)
+      id-token: write             # signing the attestations
+      attestations: write
+      artifact-metadata: write
+    env:
+      KIND: ${{ needs.plan.outputs.kind }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Get the checksums
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: SHA256SUMS-*.txt
+          merge-multiple: true
+          path: parts
+      - name: Get the Mac downloads
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: "*.dmg"
+          merge-multiple: true
+          path: files
+      - name: Get the Windows download
+        if: env.KIND != 'mactest'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: "*.zip"
+          merge-multiple: true
+          skip-decompress: true     # (a .zip would be unpacked otherwise: the download itself must arrive)
+          path: files
+      - name: Check every file against its own job's checksum, and put the checksums together
+        shell: bash
+        run: |
+          expect="SHA256SUMS-macOS-AppleSilicon.txt SHA256SUMS-macOS-Intel.txt"
+          [ "$KIND" = mactest ] || expect="SHA256SUMS-Windows.txt $expect"
+          have=$(cd parts && ls | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+          want=$(echo "$expect" | tr ' ' '\n' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')
+          if [ "$have" != "$want" ]; then
+            echo "::error::Wrong checksum files. Wanted: $want. Got: $have."
+            exit 1
+          fi
+          # Each job's own list must match the file that arrived here (nothing changed on the way).
+          cp parts/*.txt files/
+          (cd files && for s in SHA256SUMS-*.txt; do sha256sum --check "$s"; done)
+          rm files/SHA256SUMS-*.txt
+          # (one way to write each line: "hash  name", whether a job's tool wrote a space or a * before the name)
+          cat parts/*.txt | sed -E 's/^([0-9a-f]{64}) [ *]/\1  /' | LC_ALL=C sort -k2 > files/SHA256SUMS.txt
+          # ...and the merged list names exactly the files here, each once.
+          (cd files && ls | grep -vx SHA256SUMS.txt | LC_ALL=C sort > ../have.txt)
+          awk '{ $1 = ""; sub(/^ +/, ""); print }' files/SHA256SUMS.txt | LC_ALL=C sort > want.txt
+          if ! diff have.txt want.txt; then
+            echo "::error::The files here and the checksums don't name the same files."
+            exit 1
+          fi
+          (cd files && sha256sum --check SHA256SUMS.txt)
+          { echo "### The downloads"; echo; echo '```'; cat files/SHA256SUMS.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the checksums on this run's page
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          path: files/SHA256SUMS.txt
+          archive: false
+      - name: Record where the downloads came from (attestation)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: files/*
+      - name: Check the attestations (the build proves itself)
+        shell: bash
+        run: |
+          for f in files/*; do
+            ok=no
+            for try in 1 2 3 4 5 6; do
+              if gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" \
+                   --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/build.yml"; then
+                ok=yes
+                break
+              fi
+              sleep 10
+            done
+            if [ "$ok" != yes ]; then
+              echo "::error::The attestation of $f doesn't verify."
+              exit 1
+            fi
+          done
+      - name: Draft the release
+        if: env.KIND != 'branch'
+        shell: bash
+        run: |
+          # Never touches a release that exists, draft or published: stop and say so.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::A release for $TAG already exists. Nothing here changes it. If it is only a draft you don't want, delete it on GitHub, then run this job again."
+            exit 1
+          fi
+          run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          if [ "$KIND" = mactest ]; then
+            title="Maple Classic Exp Overlay: Mac test build ${TAG#mac-test-v}"
+          else
+            title="Maple Classic Exp Overlay $(echo "$TAG" | sed -E 's/-beta$/ (beta)/')"
+          fi
+          {
+            echo "(Notes to come.)"
+            if [ "$KIND" = mactest ]; then
+              echo
+              echo "**A test download for Mac, not a release.** Not tested by me on a real Mac. It sends nothing: no sharing, no health reports, no update check."
+            fi
+            echo
+            echo "---"
+            echo "**Check this download**"
+            while read -r hash name; do
+              echo "- SHA-256 of $name: \`$hash\` (also in SHA256SUMS.txt)"
+            done < files/SHA256SUMS.txt
+            echo "- On Windows, in PowerShell: \`Get-FileHash .\\<the file>\`. On a Mac, in Terminal: \`shasum -a 256 <the file>\`"
+            echo "- Built by GitHub from this tag, not on a PC. Check a file with the GitHub CLI: \`gh attestation verify <the file> --repo $GITHUB_REPOSITORY\`"
+            echo "- The same files are on [the build's page]($run), where GitHub shows the same SHA-256 for each."
+          } > notes.md
+          flags=(--draft --verify-tag --title "$title" --notes-file notes.md)
+          if [ "$KIND" = mactest ]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$TAG" files/* "${flags[@]}"
+          # What's on the draft must be exactly what was built, and what the notes say.
+          mkdir check
+          gh release download "$TAG" --dir check
+          (cd check && sha256sum --check SHA256SUMS.txt)
+          cmp files/SHA256SUMS.txt check/SHA256SUMS.txt
+          (cd check && ls | LC_ALL=C sort) > got.txt
+          (cd files && ls | LC_ALL=C sort) > sent.txt
+          diff sent.txt got.txt
+          body=$(gh release view "$TAG" --json body --jq .body)
+          while read -r hash name; do
+            if ! grep -qF "$hash" <<< "$body"; then
+              echo "::error::The notes don't show the SHA-256 of $name."
+              exit 1
+            fi
+          done < files/SHA256SUMS.txt
