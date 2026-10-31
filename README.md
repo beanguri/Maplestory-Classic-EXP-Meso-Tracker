@@ -279,7 +279,7 @@ py -3 -m pip install -r requirements.txt
 run.bat
 ```
 
-**On macOS** (with the game running through CrossOver, Whisky, Parallels or a game stream): macOS support was written by thanhphamvan, and the Mac download comes from fabriciorby's work; both tried it on a real Mac with the game. **I don't own a Mac, so I haven't tested it myself**: GitHub's automatic tests run on a real Mac, but not with the game. Until Mac players tell me it works, treat it as a test. If you try it, please tell me how it goes.
+**On macOS** (with the game's own Mac version, or the Windows one through CrossOver, Whisky, Parallels or a game stream): macOS support was written by thanhphamvan, and the Mac download comes from fabriciorby's work; both tried it on a real Mac with the game. **I don't own a Mac, so I haven't tested it myself**: GitHub's automatic tests run on a real Mac, but not with the game. Until Mac players tell me it works, treat it as a test. If you try it, please tell me how it goes.
 
 **The download** (needs macOS 14 or newer): on the [Releases page](../../releases) pick the file for your Mac. Not sure which? Apple menu > About This Mac: **Apple M1/M2/M3/M4** = `...-macOS-AppleSilicon.dmg`, **Intel** = `...-macOS-Intel.dmg`. Open it and drag **Maple Classic Exp Overlay** onto Applications. Hotkeys aren't available on macOS yet.
 
