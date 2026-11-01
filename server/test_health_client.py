@@ -188,7 +188,7 @@ check("...as is an old one that was never released (0.9.14 without -beta)", m.po
 check("a version newer than any released one is 'later' (the site may not be deployed yet): the day waits",
       m.post_health({**body, "version": "0.9.99-beta"}) == ("later", ""))
 report_body = {"id": "0123456789abcdef", "version": m.VERSION, "message": "hello", "details": "x"}
-check("Send report from a changed copy: 'bad' (the window points to GitHub)", m.post_report({**report_body, "version": "0.9.16-beta"}) == "bad")
+check("Send report from a changed copy: 'bad' (the window points to GitHub)", m.post_report({**report_body, "version": "0.9.14-myfork"}) == "bad")
 c = http.client.HTTPConnection(HOST.hostname, HOST.port, timeout=20)
 c.request("POST", "/api/report", body=json.dumps(report_body).encode(), headers={"Content-Type": "application/json",
                                                                               "CF-Connecting-IP": "10.6.0.1"})

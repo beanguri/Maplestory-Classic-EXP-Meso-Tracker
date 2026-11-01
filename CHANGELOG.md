@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.16-beta
+
+**No Reset**
+- A new switch, **No Reset**, next to Log this run (also in Settings, and as a hotkey you can set; it has no key by default). It's for farming that moves between maps: changing maps no longer pauses or starts new numbers. A break with no EXP still pauses as usual, and the numbers carry on after it. The status pill says "· No Reset" while it's on.
+- A log line made with it on names every map it covered ("Map A/Map B"). A 15-minute run with No Reset on at any moment counts in your log but stays on your PC: it's never shared with the best-maps site.
+
+**The game's "Default Ratio (Filter Applied)"**
+- The overlay notices by itself, after a few seconds, when this game setting is on, and then reads the EXP number, party size, map name, mesos and potion counts the way the game draws them with it.
+- Checked on recordings of real play with the setting switched on and off at five window sizes, two of them kept aside and never used for tuning: no wrong number caused by the setting.
+- While it isn't known yet whether the setting is on, a party list that can only be seen the filtered way is never read as solo.
+
+**Fewer wrong numbers (with or without the setting)**
+- Map name: a name that isn't on the game's map list is only taken when every try reads it the same. At some sizes (for example a 1920x1200 window) this means the map name is shown as not read more often, instead of misspelled.
+- Mesos: a front digit hidden under the mouse cursor is far less often read as a smaller amount. In a storage window, only your own amount is read (or nothing, when it can't tell which one is yours).
+- The status no longer turns red with "Can't read the EXP bar" right after a level-up, while the bar is under about 0.2% (thanks to cpaez33).
+
+**Mac download (a test)**
+- Each release now also has a Mac download for macOS 14 or newer, for Apple Silicon and for Intel, built by GitHub like the Windows one and checked the same way. It comes from fabriciorby's work; cpaez33 made it find the game opened by Nexon's Mac app, read the game window on its own (windows on top of it don't get in the way), and say when the Screen Recording permission is missing.
+- I don't have a Mac, so I haven't tested it myself. See On macOS in the README, and please tell me if it works.
+
+**Health reports (only if you said yes)**
+- They also count how many looks saw the game's "Default Ratio (Filter Applied)" on, off, not known yet, or at a size where it changes nothing. Still numbers only. See Privacy in the README.
+
 ## 0.9.15-beta
 
 **EXP and party size, read the new way**

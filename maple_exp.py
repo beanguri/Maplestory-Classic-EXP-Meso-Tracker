@@ -76,7 +76,7 @@ PLATFORM = create_platform()
 PLATFORM.setup_process()
 cv2.setNumThreads(1)
 
-VERSION = "0.9.15-beta"
+VERSION = "0.9.16-beta"
 TEST_BUILD_MARK = "-mactest"         # a Mac test build calls itself e.g. 0.9.16-mactest.1 and sends nothing
 WINDOW_TITLE = "Maple Classic Exp Overlay"    # the version is shown in Settings
 OLD_TITLES = ("Maple EXP/hr",)               # what versions before 0.9.3 were called
@@ -144,7 +144,19 @@ SHAPE_BLURBS = {"square": "The narrow card: the big number, the level bar and St
                 "wide": "Longer sideways: the level bar on top and four numbers in a row.",
                 "bar": "One thin strip with the main numbers and a slim level bar."}
 # What's new, shown once after updating to a version (plain words, newest changes only). A version with no entry shows nothing.
-WHATS_NEW = {"0.9.15-beta": (
+WHATS_NEW = {"0.9.16-beta": (
+    (None, None, (
+        ("head", "No Reset"),
+        "A new switch under the numbers (and in Settings) for farming that moves between maps: changing maps no "
+        "longer starts new numbers. Runs made with it on stay on your PC (they're not sent to the best-maps site).",
+        ("head", "Default Ratio (Filter Applied)"),
+        "Playing with this game setting on? The EXP number, party size, map name, mesos and potion counts are now "
+        "read with it on too. The overlay notices it by itself after a few seconds. Checked on recordings of real play: tell me "
+        "if a number looks off.",
+        ("head", "A Mac download, as a test"),
+        "There's now a Mac download (Apple Silicon and Intel). I don't have a Mac, so I haven't tested it myself: "
+        "if you try it, tell me if it works.")),),
+    "0.9.15-beta": (
     (None, None, (
         ("head", "EXP and party size, read the new way"),
         "The EXP number and your party size are now read with the game's own font and the exact shape of the party "

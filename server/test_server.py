@@ -574,7 +574,7 @@ got, r = stored(50, 0, who, version="0.9.14-myfork")
 res = (r.get("results") or [{}])[0] if got == "not stored" else {}
 check(f"a changed copy's run (0.9.14-myfork) is refused for good, not stored ({res})",
       got == "not stored" and res.get("ok") is False and "retry" not in res)
-got, r = stored(50, 15, who, version="0.9.16-beta")
+got, r = stored(50, 15, who, version="0.9.99-beta")
 res = (r.get("results") or [{}])[0] if got == "not stored" else {}
 check(f"a run from a version newer than any released one waits (retry), not stored ({res})",
       got == "not stored" and res.get("ok") is False and res.get("retry") is True)
