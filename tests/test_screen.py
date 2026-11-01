@@ -203,7 +203,8 @@ for name, info in sorted(PARTS["inventory"].items()):
     blank = m.Reading(*([None] * len(m.Reading._fields)))
     scene = np.full((wh, ww, 3), 25, np.uint8)
     scene[:h, :w] = inv
-    scene[:h, w + 10:2 * w + 10] = inv                              # the storage's box and yours
+    oo = round(m.STORAGE_SPACING * bw)                              # (the two panels' boxes sit at this spacing)
+    scene[:h, oo:oo + w] = inv                                      # the storage's box and yours
     storage = money_window_picture("storage", ww, scene, scale=gh / 28, at=(2 * w + 40, int(0.1 * h)))
     clock = [1000.0]
     real_monotonic = m.time.monotonic
@@ -212,7 +213,7 @@ for name, info in sorted(PARTS["inventory"].items()):
         reader.next_scan = 0.0
         r = reader._read_extras(FakeScreen(storage), (0, 0, ww, wh), blank)
         check(f"in a storage window the right-hand box is read as yours, {size}",
-              r.window == "storage" and reader.mesos_box == (w + 10 + bx, by, bw, bh) and not reader.two_boxes)
+              r.window == "storage" and reader.mesos_box == (oo + bx, by, bw, bh) and not reader.two_boxes)
         check(f"the status line says which window is open, {size}", "Storage window open" in (r.note or ""))
         check(f"a window's box is not remembered as the inventory's, {size}", r.mesos_at is None)
         check(f"it looks again within {m.WINDOW_SCAN_SECONDS} s while the window is open, {size}",
@@ -227,6 +228,87 @@ for name, info in sorted(PARTS["inventory"].items()):
               r.window is None and reader.mesos_box is None and reader.next_scan - clock[0] > m.WINDOW_SCAN_SECONDS)
     finally:
         m.time.monotonic = real_monotonic
+
+# ---- a storage window's two mesos boxes sit at one fixed spacing: only such a pair is read, the right-hand one is yours.
+# (F15: a hand cursor over the coin of yours left the stored box as the "right-hand" one: 0 mesos read for 10,569)
+real = {"1920": [(730, 765, 180, 19), (1022, 765, 181, 19)], "2560": [(973, 1020, 241, 26), (1363, 1020, 241, 26)],
+        "5K": [(1785, 1947, 482, 51), (2564, 1947, 483, 51)]}                    # (as measured on real recordings)
+check("storage pair: the two boxes at the spacing are the stored mesos and yours, at 1920, 2560 and 5K",
+      all(m.storage_pair(b) == (b[0], b[1]) and m.storage_pair(b[::-1]) == (b[0], b[1]) for b in real.values()))
+other = {"1920": (36, 674, 200, 19), "2560": (47, 990, 268, 26), "5K": (154, 1939, 535, 52)}       # a third, unrelated box far left
+check("storage pair: a third box elsewhere changes nothing",
+      all(m.storage_pair([other[k]] + real[k]) == (real[k][0], real[k][1]) for k in real))
+check("storage pair: two boxes that are not at the spacing (the stored one and an unrelated one) are no pair",
+      all(m.storage_pair([other[k], real[k][0]]) is None and m.storage_pair([other[k], real[k][1]]) is None for k in real))
+check("storage pair: one box, none, boxes of different widths or heights are no pair",
+      m.storage_pair([real["2560"][0]]) is None and m.storage_pair([]) is None
+      and m.storage_pair([real["2560"][0], (1363, 1020, 300, 26)]) is None and m.storage_pair([real["2560"][0], (1363, 1060, 241, 26)]) is None)
+check("storage pair: boxes in a chain of the spacing are ambiguous: no pair",
+      m.storage_pair([(0, 0, 100, 10), (162, 0, 100, 10), (324, 0, 100, 10)]) is None)
+
+for name, info in sorted(PARTS["inventory"].items()):
+    inv, gh, (bx, by, bw, bh) = cv2.imread(str(FRAMES / name)), info["gh"], info["box"]
+    h, w = inv.shape[:2]
+    size = f"EXP digits {gh:.0f} px"
+    oo = round(m.STORAGE_SPACING * bw)
+    ww, wh = 3 * oo + w + 40 + int(1100 * gh / 28) + 40, int(h * 1.3)
+    blank = m.Reading(*([None] * len(m.Reading._fields)))
+
+    def storage_scene(copies):
+        scene = np.full((wh, ww, 3), 25, np.uint8)
+        for x in copies:
+            scene[:h, x:x + w] = inv
+        return money_window_picture("storage", ww, scene, scale=gh / 28, at=(3 * oo + w + 40, int(0.1 * h)))
+
+    for title, copies, want in (("an unrelated box, the stored mesos and yours", (0, 2 * oo, 3 * oo), 3 * oo + bx),
+                                ("only the stored box and yours", (2 * oo, 3 * oo), 3 * oo + bx),
+                                ("the coin of yours covered: an unrelated box and the stored mesos only", (0, 2 * oo), None),
+                                ("the stored box alone", (2 * oo,), None)):
+        reader = m.ScreenReader(m.DigitTemplates.load())
+        reader.gh = gh
+        reader.mesos_digits = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz")
+        reader.next_scan = 0.0
+        r = reader._read_extras(FakeScreen(storage_scene(copies)), (0, 0, ww, wh), blank)
+        check(f"in a storage window with {title}, "
+              + ("yours is read" if want else "nothing is read (never the stored mesos)") + f", {size}",
+              r.window == "storage" and (reader.mesos_box == (want, by, bw, bh) if want else reader.mesos_box is None and r.mesos is None))
+        if want is None:
+            check(f"...and the outline search stays off while whose box is whose can't be told, {size}", reader.two_boxes)
+
+# ---- a hidden leading digit is never read as a shorter number (22286 as 2286): the cell that ends the number must be a blank
+for name, info in sorted(PARTS["inventory"].items()):
+    inv, gh, field = cv2.imread(str(FRAMES / name)), info["gh"], tuple(info["box"])
+    bx, by, bw, bh = field
+    size = f"EXP digits {gh:.0f} px"
+    full, short = info["mesos"], int(str(info["mesos"])[1:])                      # 18047 and 8047
+    cx = m._mesos_spot(field, len(str(full)) - 1)                                  # the leading digit's centre
+    hw = 0.2 * bh
+
+    def covered(kind):
+        im = inv.copy()
+        if kind == "blank":                                                        # the digit is not there: a blank cell
+            im[by + 2:by + bh - 2, int(cx - 1.2 * hw):int(cx + 1.2 * hw)] = 255
+        elif kind == "bar":                                                        # a sprite's edge across the digit
+            cv2.line(im, (int(cx - hw), by + bh - 3), (int(cx + hw), by + 3), (60, 60, 60), max(1, bh // 8))
+        elif kind == "corner":
+            im[by + 2:by + int(0.5 * bh), int(cx - hw):int(cx + hw)] = 255
+        elif kind == "half":                                                       # the left half of the digit gone
+            im[by + 2:by + bh - 2, int(cx - hw):int(cx)] = 255
+        return im
+    tpl = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz").templates()
+    check(f"a blank cell ends the number as before, {size}", (m.read_mesos_positions(covered("blank"), field, tpl) or [None])[0] == short)
+    for kind in ("bar", "corner"):
+        got = m.read_mesos_positions(covered(kind), field, tpl)
+        check(f"a covered leading digit ({kind}) is never read as the shorter number, {size}", got is None or got[0] == full)
+    # ...and a number that just lost a digit has to end in a nearly blank cell (spending does that, a half-hidden digit too)
+    for kind, want in (("blank", short), ("half", None)):
+        reader = m.ScreenReader(m.DigitTemplates.load())
+        reader.gh = gh
+        reader.mesos_digits = m.MesosDigits(path=Path(tempfile.mkdtemp()) / "x.npz")
+        reader.mesos_count = len(str(full))
+        got = reader._read_mesos(FakeScreen(covered(kind)), bx, by, bw, bh)[0]
+        check(f"after a {len(str(full))}-digit number, the {kind} cell: " + ("the shorter number is read at once" if want else "never the shorter number")
+              + f", {size}", got == want if want else got in (None, full))
 
 # ---- the trade window's chat panel can cover the coin: the box is found by its size
 for name, info in sorted(PARTS["inventory"].items()):

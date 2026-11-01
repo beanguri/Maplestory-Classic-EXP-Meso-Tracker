@@ -1483,6 +1483,19 @@ def find_trade_mesos_box(bgr, gh, hsv=None):
     return max(found) if found else None
 
 
+STORAGE_SPACING = 1.618     # a storage window's two mesos boxes (the stored mesos, yours) are 208 design px = this many box widths apart
+
+
+def storage_pair(fields):
+    """(stored mesos box, yours) among the mesos boxes found while a storage window is open, or None. The two panels'
+    boxes sit side by side at one fixed spacing; a hand cursor over the coin of yours leaves only the stored box and some
+    other one, and the right-hand of those two is not yours (F08, F15). A pair found at the spacing: yours is the right one."""
+    pairs = [(a, b) for a in fields for b in fields
+             if abs(b[1] - a[1]) <= 0.2 * a[3] and abs(b[2] - a[2]) <= 0.05 * a[2]
+             and abs(b[0] - a[0] - STORAGE_SPACING * a[2]) <= 0.03 * a[2]]
+    return pairs[0] if len(pairs) == 1 else None
+
+
 MONEY_COLOURS = {"orange": ((6, 150, 170), (16, 255, 255)),        # TAKE OUT, BUY ITEM, TRADE...
                  "green": ((28, 60, 140), (50, 255, 255)),         # EXIT, LEAVE STORE, CANCEL
                  "blue": ((92, 100, 140), (110, 255, 255))}        # ORGANIZE ITEM
@@ -1598,6 +1611,18 @@ def _mesos_strokes(bgr, field):
     return Layout(0.615 * h, y + 0.525 * h, [], [], (0, 0, 0, 0), strokes)
 
 
+MESOS_END_INK = 0.5     # the cell that ends a number may hold at most this much ink, against the number's own digits
+MESOS_DROP_INK = 0.2    # ...and this much when the number has fewer digits than at the look before
+
+
+def _mesos_ink(lay, field, i):
+    """How much ink (95th percentile of the strokes) the cell of the i-th digit from the right of the mesos box holds."""
+    x, y, w, h = field
+    cx, half = _mesos_spot(field, i), 0.45 * MESOS_PITCH * h
+    cell = lay.V[max(0, int(round(y + 0.225 * h))):int(round(y + 0.825 * h)), max(0, int(round(cx - half))):int(round(cx + half))]
+    return float(np.percentile(cell, 95)) if cell.size else 0.0
+
+
 def mesos_box_lines_up(bgr, field, templates):
     """For a box found by its outline: does its right edge line up with the number? The
     first digit must match very clearly (in the wrong place the box's border can pass for
@@ -1609,7 +1634,7 @@ def mesos_box_lines_up(bgr, field, templates):
     return first >= 0.85 and after < 0.84
 
 
-def read_mesos_positions(bgr, field, templates, digit_count=None):
+def read_mesos_positions(bgr, field, templates, digit_count=None, end_ink=None):
     """Reads the mesos box digit by digit at the spots the game draws them.
 
     Nothing has to be separated from the background first, so it also works when the
@@ -1617,12 +1642,13 @@ def read_mesos_positions(bgr, field, templates, digit_count=None):
     or clearly not one, and once the number ends none of the next few spots to its left
     may be a clear digit, so a digit lost in a busy background can't silently shorten the
     number from the middle. If digit_count is given, the number must have exactly that many digits (which
-    also catches a lost first digit). Returns (number, Layout, weakest score, weakest lead),
-    or None.
+    also catches a lost first digit). The cell that ends the number must be a blank: if it holds more than
+    end_ink (MESOS_END_INK) of the digits' own ink, a digit may be hidden there and nothing is read. Returns
+    (number, Layout, weakest score, weakest lead), or None.
     """
     x, y, w, h = field
     lay = _mesos_strokes(bgr, field)
-    digits, cells, scores, leads, ended = "", [], [], [], 0
+    digits, cells, scores, leads, ended, end_at = "", [], [], [], 0, None
     for i in range(16):
         cx = _mesos_spot(field, i)
         if cx - 0.3 * h < x:
@@ -1642,11 +1668,15 @@ def read_mesos_positions(bgr, field, templates, digit_count=None):
             scores.append(score)
             leads.append(lead)
         elif empty:
-            ended = 1                                 # the number ends here
+            ended, end_at = 1, i                      # the number ends here
         else:
             return None                               # unclear: don't guess
     if not digits or (len(digits) > 1 and digits[0] == "0"):
         return None
+    if end_at is not None:
+        own = np.median([_mesos_ink(lay, field, j) for j in range(end_at)])
+        if _mesos_ink(lay, field, end_at) > (MESOS_END_INK if end_ink is None else end_ink) * own:
+            return None       # the cell where the number "ends" holds ink: a digit under a cover or a cursor, not a blank
     if scores[-1] < 0.85:
         return None          # the first digit must be very clear: a see-through box's background
                              # can pass for an extra '1' in front (real first digits score ~0.95)
@@ -2552,17 +2582,16 @@ class ScreenReader:
                     if window == "trade" and not fields:            # its chat panel may cover the coin
                         box = find_trade_mesos_box(img, g, hsv)
                         fields = [box] if box else []
-                    if window == "storage" and len(fields) == 2:
-                        fields = [max(fields)]                      # yours is the right-hand one
-                        self.two_boxes = False
+                    if window == "storage":
+                        pair = storage_pair(fields)                 # (stored mesos, yours)
+                        self.two_boxes = not pair                   # (no pair: whose box is whose can't be told, read none)
+                        fields = [pair[1]] if pair else []
                     elif window == "shop":
                         self.two_boxes = False                      # (both would be yours: the first will do)
                     else:
-                        # A storage / trade window outside those cases shows a second mesos box next to
-                        # yours, and which is which can't be told: read neither until it's closed.
+                        # A trade window (or none) can show a second mesos box next to yours, and which
+                        # is which can't be told: read neither until it's closed.
                         self.two_boxes = len(fields) > 1
-                        if window == "storage":
-                            fields = []
                     field = None if self.two_boxes else (fields[0] if fields else None)
                     if field and window == "shop" and field[2] < 16 * g:
                         # (its digits end a little further from the box's right edge)
@@ -2757,6 +2786,10 @@ class ScreenReader:
         learned = self.mesos_digits
         if learned.complete:                          # all ten mesos digits learned
             got = read_mesos_positions(img, (fx, fy, w, h), learned.templates())
+            if got and self.mesos_count and len(str(got[0])) < self.mesos_count:
+                # A number that lost a digit since the last look: spending can do that, but so can a cover over its first
+                # digit (22286 read as 2286), so the cell that ends the number has to be nearly blank.
+                got = read_mesos_positions(img, (fx, fy, w, h), learned.templates(), end_ink=MESOS_DROP_INK)
             if not got:
                 self.mesos_fails += 1
                 return None, img, ()
