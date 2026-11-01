@@ -1216,7 +1216,7 @@ try:
 
     # the map name raising: the same look still has its EXP, a note, and one entry in errors.log
     m.TESS = real_tess
-    m.read_map_name = lambda bgr, gh, filtered=False: (_ for _ in ()).throw(RuntimeError("no eng.traineddata"))
+    m.read_map_name = lambda bgr, gh: (_ for _ in ()).throw(RuntimeError("no eng.traineddata"))
     r = part_reader()
     r._game_rect = lambda: (0, 0, fw, fh)
     r.read(fscreen)                                    # (the first look finds the bar)
@@ -1241,7 +1241,7 @@ try:
     r.read(fscreen)
     tail = m.ERROR_LOG_PATH.read_text()[len(log_after):]
     check("...after 10 minutes it is written again, with the number skipped", "4 more failures skipped" in tail)
-    m.read_map_name = lambda img, g, filtered=False: "Henesys"      # (works again; the real one needs Tesseract, which CI may not have)
+    m.read_map_name = lambda img, g: "Henesys"      # (works again; the real one needs Tesseract, which CI may not have)
     clock[0] += 1.5
     r.map_unread, r.next_map_read, r.map_print = True, 0.0, None
     got = r.read(fscreen)
@@ -2744,7 +2744,7 @@ check("off-screen hint: unknown screens or window, no hint",
       not m.bottom_off_screen((0, 0, 1920, 1228), []) and not m.bottom_off_screen(None, S1080))
 
 
-# ---- map name under the game's filter (F07): a name that isn't on the game's list needs every try to agree
+# ---- map name: a name that isn't on the game's list needs every try to agree (F07 filtered, F14 Default too)
 from collections import Counter  # noqa: E402
 box_pic = np.full((120, 460, 3), (200, 170, 110), np.uint8)             # (light-blue info box: BGR)
 cv2.putText(box_pic, "WARNING STREET", (115, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
@@ -2752,39 +2752,30 @@ cv2.putText(box_pic, "DEEP VALLEY I", (115, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
 real_votes = m._ocr_votes
 
 
-def map_read(votes, filtered):
+def map_read(votes):
     m._ocr_votes = lambda *a, **k: Counter(votes)
     try:
-        return m.read_map_name(box_pic, 16, filtered)
+        return m.read_map_name(box_pic, 16)
     finally:
         m._ocr_votes = real_votes
 
 
 split = {"Deep Valley": 4, "Deep Valley I": 2}                         # (the real 5120x2880 filtered tries: the last "I" is dropped)
-check("map name: Default reading is as before (the plurality of a split vote)", map_read(split, False) == "Deep Valley")
-check("map name, filtered: a name not on the list with a split vote is unknown, not a wrong name", map_read(split, True) is None)
-check("map name, filtered: ...also a misread one ('Deen Vallev II' 4 of 6)",
-      map_read({"Deen Vallev II": 4, "Deen Vallevil": 1, "Deep Vallev II": 1}, True) is None)
-check("map name, filtered: a name not on the list that every try gives is kept (an event map)",
-      map_read({"Halloween Event Field": 6}, True) == "Halloween Event Field")
-check("map name, filtered: a name on the list is still read from a plurality, in the game's spelling",
-      map_read({"Deep Valley II": 5, "Deep Valley": 1}, True) == "Deep Valley II")
-check("map name, filtered: one try is still not enough", map_read({"Deep Valley II": 1}, True) is None)
-check("map name: Default reading keeps a plurality for a name not on the list",
-      map_read({"Halloween Event Field": 5, "Halloween Event Fleld": 1}, False) == "Halloween Event Field")
+check("map name: a name not on the list with a split vote is unknown, not a wrong name", map_read(split) is None)
+check("map name: ...also a misread one ('Deen Vallev II' 4 of 6)",
+      map_read({"Deen Vallev II": 4, "Deen Vallevil": 1, "Deep Vallev II": 1}) is None)
+check("map name: the Default 1920x1200 case, 'Deen Vallevil' in most tries, is unknown",
+      map_read({"Deen Vallevil": 5, "Deep Valley II": 1}) is None)
+check("map name: a name not on the list that every try gives is kept (an event map)",
+      map_read({"Halloween Event Field": 6}) == "Halloween Event Field")
+check("map name: an event map with one try off is unknown (no snapping of near misses)",
+      map_read({"Halloween Event Field": 5, "Halloween Event Fleld": 1}) is None)
+check("map name: a name on the list is still read from a plurality, in the game's spelling",
+      map_read({"Deep Valley II": 5, "Deep Valley": 1}) == "Deep Valley II")
+check("map name: a near miss of a listed name is snapped to the list ('Deep Vallev II' 4 of 6)",
+      map_read({"Deep Vallev II": 4, "Deep Valley II": 2}) == "Deep Valley II")
+check("map name: one try is still not enough", map_read({"Deep Valley II": 1}) is None)
 
-# the reader hands its filter state to the map name reading, and only "on" counts
-real_filtered, real_map_fn, seen_flags = m.ScreenReader.filtered, m.read_map_name, []
-m.read_map_name = lambda img, g, filtered=False: seen_flags.append(filtered) or "Henesys"
-try:
-    for on in (True, False):
-        m.ScreenReader.filtered = property(lambda self, on=on: on)
-        r, screen = matrix_reader("map name")
-        clock[0] += 5
-        r._read_info(screen, (0, 0, 1280, 720))
-finally:
-    m.ScreenReader.filtered, m.read_map_name = real_filtered, real_map_fn
-check(f"the reader reads the map name as filtered exactly when its filter state is on ({seen_flags})", seen_flags == [True, False])
 
 
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")

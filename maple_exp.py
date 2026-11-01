@@ -1394,12 +1394,12 @@ def is_town(name):
     return bool(e and e[2])
 
 
-def read_map_name(bgr, gh, filtered=False):
+def read_map_name(bgr, gh):
     """The map name (the lower line of white text) from a shot of the minimap's info box.
 
-    filtered (the game's "Default Ratio (Filter Applied)" is on): a name that isn't on the game's list is taken only if
-    every try says the same. The filter's sharpening makes Tesseract drop a last "I" or turn "p" and "y" into "n" and "v"
-    in some tries, and a plurality of those is a wrong name (F07)."""
+    A name that isn't on the game's list is taken only if every try says the same: Tesseract drops a last "I" or turns
+    "p" and "y" into "n" and "v" in some tries (the filter's sharpening, F07; a 1.56 UI scale on Default, F14), and a
+    plurality of those is a wrong name. Event maps not on the list are still read when all tries agree."""
     white = _whiteness(bgr[:, int(0.85 * bgr.shape[0]):])      # skip the map's icon
     _, blobs = _blobs(white > 0.5)
     glyphs = sorted((b for b in blobs if 0.3 * gh <= b.h <= 1.6 * gh and b.w <= 2.5 * gh),
@@ -1421,7 +1421,7 @@ def read_map_name(bgr, gh, filtered=False):
     name, n = votes.most_common(1)[0] if votes else (None, 0)
     if n < 2:
         return None
-    if filtered and map_list().find(name) is None and n < sum(votes.values()):
+    if map_list().find(name) is None and n < sum(votes.values()):
         return None
     return snap_map_name(name)
 
@@ -2860,7 +2860,7 @@ class ScreenReader:
                         self.map_unread, self.next_map_read = True, 0.0
                     elif self.map_unread and now >= self.next_map_read:
                         with self._part("map name"):
-                            name = read_map_name(shot[0], g, self.filtered)
+                            name = read_map_name(shot[0], g)
                             self._part_ok("map name")
                             self._tried("map", name is not None)
                         self.map_look = {"image": shot[0], "text": name}
