@@ -32,12 +32,12 @@ You don't type anything in. It reads all of this from your game screen by itself
 
 ### On macOS
 
-It works with the game's own Mac version, or the Windows one through CrossOver, Whisky, Parallels or a game stream. **A test download: I don't own a Mac, so I haven't tested it myself** (GitHub's automatic tests run on a real Mac, but not with the game). The Mac version comes from thanhphamvan's, fabriciorby's and cpaez33's work, and they tried it with the game. If you try it, please tell me how it goes.
+It works with the game's own Mac version, or the Windows one through CrossOver, Whisky, Parallels or a game stream. **A test download: I don't own a Mac, so I haven't tested it myself** (GitHub's automatic tests run on a real Mac, but not with the game). A player has confirmed it works on an Apple Silicon Mac with Nexon's Mac launcher; Intel isn't confirmed yet. The Mac version comes from thanhphamvan's, fabriciorby's and cpaez33's work, and they tried it with the game. If you try it, please tell me how it goes.
 
 1. On the [download page](../../releases/latest), pick the file for your Mac (needs macOS 14 or newer). Apple menu > About This Mac: **Apple M1/M2/M3/M4** = `...-macOS-AppleSilicon.dmg`, **Intel** = `...-macOS-Intel.dmg`.
 2. Open it and drag **Maple Classic Exp Overlay** onto Applications.
 3. Open it once (macOS refuses it, because it isn't signed with an Apple developer account). Then **System Settings > Privacy & Security**, scroll down to "Maple Classic Exp Overlay was blocked", click **Open Anyway**, and confirm. If that button doesn't show up, run this in Terminal once, then open the app again: `xattr -dr com.apple.quarantine "/Applications/Maple Classic Exp Overlay.app"`
-4. Allow it in **System Settings > Privacy & Security > Screen Recording** (it reads the game from the screen), then start it again. macOS may ask again after an update. The game window is found by "MapleStory" in its title; if it isn't found, use **Select area**.
+4. Allow it in **System Settings > Privacy & Security > Screen Recording** (it reads the game from the screen), then start it again. If macOS asks whether to let the app bypass the system's private window picker to access the screen, click **Allow** and start it again. macOS may ask again after an update. The game window is found by "MapleStory" in its title; if it isn't found, use **Select area**.
 
 Hotkeys aren't available on macOS yet.
 
