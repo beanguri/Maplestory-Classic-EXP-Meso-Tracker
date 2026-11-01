@@ -71,6 +71,14 @@ for (const want of ["party size, 0.9.14-beta (reader v2): agree 10, disagree 40"
   assert.ok(both.includes(want), "missing: " + want + "\n" + both);
 }
 assert.ok(!both.includes("agree 59"), "v2 and v3 party numbers are never added up\n" + both);
+
+// 0.9.16: looks by the game's filter state (optional; older versions have none).
+assert.ok(both.includes("no game filter data yet"), both);
+const flt = summarize({ groups: [{ ...base, ...none, v: "0.9.16-beta", w: 2560, h: 1440, fs: 1, tess: "ok", cap: "screen", players: 2,
+  looks: 1000, e_read: 1000, flt_on: 600, flt_off: 300, flt_unk: 100, flt_none: 0 }],
+  days: [{ day: "2026-11-05", v: "0.9.16-beta", players: 2 }] }, 7).join("\n");
+assert.ok(flt.includes("game filter (0.9.16 on): on 600 (60.0%), off 300 (30.0%), unknown 100 (10.0%), no effect 0 (0.0%)"), flt);
+assert.ok(queries("2026-11-01").groups.includes("$.filter.no_effect"), "the summary query sums filter.no_effect");
 for (const [v, want] of [["0.9.14-beta", "reader v2"], ["0.9.14", "reader v2"], ["0.9.9", "reader v2"], ["0.9.15-beta", "reader v3"],
   ["0.9.140", "reader v3"], ["1.0.0", "reader v3"]]) assert.equal(partyReader(v), want, v);
 assert.ok(quiet.includes("no UI size or layout data yet") && quiet.includes("mesos: no shadow data yet"), quiet);

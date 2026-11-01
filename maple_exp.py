@@ -489,7 +489,7 @@ def sharing_blocked():
 def newer_health_key(field, body):
     """Is `field`, which the site refused, something only a newer overlay sends (so the site is the one that's old)?"""
     ms = body.get("ms") if isinstance(body, dict) else None
-    return (field in healthlog.V2_KEYS and field in body) or (
+    return (field in healthlog.NEW_KEYS and field in body) or (
         field == "ms" and isinstance(ms, dict) and any(k in ms for k in healthlog.V2_MS))
 
 
@@ -1844,9 +1844,9 @@ def find_party_bars(bgr, gh, hsv=None):
 
 Reading = namedtuple("Reading", "where candidates confident text image boxes map note "
                                  "mesos mesos_image mesos_boxes party mesos_at window bar percent_only level exp_kind tries ms shadow v2_at "
-                                 "shadow_why ui layout shadows",
+                                 "shadow_why ui layout shadows filter",
                      defaults=((), False, "", None, (), None, None, None, None, (), None, None, None, None, False, None,
-                               None, (), None, None, None, None, None, None, ()))
+                               None, (), None, None, None, None, None, None, (), None))
 # percent_only: the bar shows just "[58.47%]" (candidates are then [(None, pct)]); level: the level read
 # from the status bar's LV badge, with where it came from, as (level, source), or None
 # exp_kind, tries and ms are for health reports (healthlog.py): how the EXP look went (read, tesseract, unclear,
@@ -1857,7 +1857,8 @@ Reading = namedtuple("Reading", "where candidates confident text image boxes map
 # shadow_why, ui, layout and shadows are for health reports too: why reader v2 didn't read the EXP bar when today's
 # reader did ("not_found" / "unclear", only with an old_only shadow); the UI size the look knew ("default" / "ideal",
 # from the EXP digit height); the potion bar's layout when the finder found it (potion_bar.LAYOUTS); and what the
-# other parts' shadows did this look, (part, what happened, v2's milliseconds) each
+# other parts' shadows did this look, (part, what happened, v2's milliseconds) each; filter: the game's
+# "Default Ratio (Filter Applied)" state the look saw (ScreenReader.filter_state), None when it didn't get that far
 
 
 def _view(img, lay):
@@ -2141,7 +2142,8 @@ class ScreenReader:
                         self._read_level(capture, rect)
         return self._with_part_notes(reading._replace(
             level=(self.level, "badge") if self.level and reading.percent_only and self.mode == "window" else None,
-            tries=tuple(self._tries), shadows=tuple(self._part_shadows), ui=self._ui_mode(reading, rect) or reading.ui))
+            tries=tuple(self._tries), shadows=tuple(self._part_shadows), ui=self._ui_mode(reading, rect) or reading.ui,
+            filter=self.filter_state))
 
     def _look_at_filter(self, capture, rect):
         """Keeps the answer to "is the filtered UI on?" up to date (filter_ui.py): a small picture of the status bar every
@@ -5868,7 +5870,7 @@ class App:
                 game = (rect[2], rect[3], any(rect[2] == w and rect[3] == h for w, h, _ in self._health_monitors), gh)
             self.healthlog.look(healthlog.kind_of(r), r.percent_only, r.tries, r.ms,
                                 (now - last) if last is not None and self.tracker.running else 0.0, game, r.shadow,
-                                r.ui, r.layout, r.shadows, r.shadow_why)
+                                r.ui, r.layout, r.shadows, r.shadow_why, r.filter)
         except Exception as e:                      # (counting must never keep a reading from being handled)
             log_error("counting a look for the health report", e)
 
