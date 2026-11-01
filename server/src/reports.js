@@ -23,7 +23,7 @@ const REPORT_MAX_BYTES = 16384;
 const HEALTH_KEYS = ["id", "version", "day", "os", "screens", "game", "capture", "tesseract", "seconds_tracking",
   "looks", "exp"];
 const HEALTH_OPTIONAL = ["level", "map", "class", "mesos", "potions", "errors", "ms", "shadow", "ui", "shadow_mesos",
-  "shadow_party", "shadow_why"];
+  "shadow_party", "shadow_why", "filter"];
 const EXP_KEYS = ["read", "tesseract", "unclear", "not_found", "covered", "no_window", "percent_only"];
 const PAIRS = {            // the optional "tried / read" counters and their exact keys
   level: ["read", "unclear"], map: ["read", "unread"], class: ["read", "unread"],
@@ -34,6 +34,8 @@ const SHADOW_KEYS = ["agree", "disagree", "v2_only", "old_only", "neither", "ski
 // ui and shadow_why also <= looks; no cross-sums, so a client counting slip can never lose a whole day.
 const UI_KEYS = ["default", "ideal", "keyboard", "controller"];
 const WHY_KEYS = ["not_found", "unclear"];
+// Added for 0.9.16 (optional, so older reports stay valid): looks by the game's "Default Ratio (Filter Applied)" state.
+const FILTER_KEYS = ["on", "off", "unknown", "no_effect"];
 const MS_KEYS = ["look_avg", "look_p95", "v2_avg", "mesos_v2_avg", "party_v2_avg"];
 
 const VERSION = /^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/;
@@ -102,7 +104,7 @@ export function badHealthField(b, today) {
   for (const name of ["shadow_mesos", "shadow_party"]) {
     if (Object.hasOwn(b, name) && (!sameKeys(b[name], SHADOW_KEYS) || !SHADOW_KEYS.every((k) => count(b[name][k])))) return name;
   }
-  for (const [name, keys] of [["ui", UI_KEYS], ["shadow_why", WHY_KEYS]]) {
+  for (const [name, keys] of [["ui", UI_KEYS], ["shadow_why", WHY_KEYS], ["filter", FILTER_KEYS]]) {
     if (Object.hasOwn(b, name) && (!sameKeys(b[name], keys) || !keys.every((k) => isInt(b[name][k], 0, b.looks)))) return name;
   }
   return null;

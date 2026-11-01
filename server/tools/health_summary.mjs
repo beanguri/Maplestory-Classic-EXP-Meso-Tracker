@@ -46,6 +46,7 @@ export function queries(since) {
       ${S("shadow.errors")} AS sh_err,
       ${S("ui.default")} AS ui_default, ${S("ui.ideal")} AS ui_ideal, ${S("ui.keyboard")} AS ui_kb, ${S("ui.controller")} AS ui_ctl,
       ${S("shadow_why.not_found")} AS why_nf, ${S("shadow_why.unclear")} AS why_unclear,
+      ${S("filter.on")} AS flt_on, ${S("filter.off")} AS flt_off, ${S("filter.unknown")} AS flt_unk, ${S("filter.no_effect")} AS flt_none,
       ${SHADOW_PARTS.map(([p, c]) => SHADOW_FIELDS.map(([f, a]) => `${S(p + "." + f)} AS ${c}_${a}`).join(", ")).join(", ")},
       COALESCE(SUM(${J("ms.mesos_v2_avg")} * ${J("looks")}),0) AS ms_mes_w, COALESCE(SUM(${J("ms.party_v2_avg")} * ${J("looks")}),0) AS ms_par_w,
       COALESCE(SUM(CASE WHEN ${J("ms.mesos_v2_avg")} IS NOT NULL THEN ${J("looks")} END),0) AS mes_looks,
@@ -177,6 +178,12 @@ export function summarize(data, dayCount) {
     ? `   UI size: Default ${num(total.ui_default)} (${pct(total.ui_default, uiMode)}), Ideal ${num(total.ui_ideal)} (${pct(total.ui_ideal, uiMode)});` +
       ` layout: keyboard ${num(total.ui_kb)} (${pct(total.ui_kb, uiLay)}), controller ${num(total.ui_ctl)} (${pct(total.ui_ctl, uiLay)})`
     : "   no UI size or layout data yet");
+  const [fOn, fOff, fUnk, fNone] = ["flt_on", "flt_off", "flt_unk", "flt_none"].map((f) => total[f] || 0);   // (looks by the game's filter)
+  const flt = fOn + fOff + fUnk + fNone;
+  out.push(flt
+    ? `   game filter (0.9.16 on): on ${num(fOn)} (${pct(fOn, flt)}), off ${num(fOff)} (${pct(fOff, flt)}),` +
+      ` unknown ${num(fUnk)} (${pct(fUnk, flt)}), no effect ${num(fNone)} (${pct(fNone, flt)})`
+    : "   no game filter data yet (0.9.16 on)");
   const shadowLine = (name, t, c, ms, lk) => {
     const f = Object.fromEntries(SHADOW_FIELDS.map(([, a]) => [a, t[`${c}_${a}`]]));
     if (!Object.values(f).some((v) => v)) return false;

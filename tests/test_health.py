@@ -667,7 +667,7 @@ log.snapshot("0.9.14-beta", "Windows 10.0.26200", [(2560, 1440, 100)], "window",
 log.look("read", ms=20.0)
 body = log.body("2026-10-25", HID)
 check("no new key in the body until something new was counted (an old overlay's shape)",
-      not any(k in body for k in healthlog.V2_KEYS) and set(body.get("ms", {})) <= {"look_avg", "look_p95", "v2_avg"})
+      not any(k in body for k in healthlog.NEW_KEYS) and set(body.get("ms", {})) <= {"look_avg", "look_p95", "v2_avg"})
 looks_in = (("default", "keyboard"), ("default", "keyboard"), ("ideal", "controller-standard"), ("ideal", "controller-cross"),
             (None, None), ("sideways", "pages"), ("default", None))
 for ui, layout in looks_in:
@@ -780,6 +780,10 @@ try:
         m.urllib.request.urlopen = old_site(key)
         check(f"an older site refusing the new key '{key}' by name is 'later' (the day waits)",
               m.post_health({**copy.deepcopy(plain_body), key: v2_body[key]}) == ("later", key))
+    m.urllib.request.urlopen = old_site("filter")
+    check("an older site refusing 0.9.16's 'filter' by name is 'later' (the day waits for the site's deploy)",
+          m.post_health({**copy.deepcopy(plain_body), "filter": {"on": 1, "off": 0, "unknown": 0, "no_effect": 0}}) == ("later", "filter"))
+    check("...but a refusal of 'filter' on a body without it is a real refusal", m.post_health(plain_body) == ("bad", "filter"))
     m.urllib.request.urlopen = old_site("ui")
     check("a refusal of 'ui' on a body that has no 'ui' is a real refusal", m.post_health(plain_body) == ("bad", "ui"))
     m.urllib.request.urlopen = old_site("id")
@@ -850,6 +854,35 @@ check("the look-time histogram read from the file keeps only the buckets the ove
 rd = m.Reading("x")
 check("a Reading has no UI size, layout or part shadows until a reader sets them",
       rd.ui is None and rd.layout is None and rd.shadows == () and rd.shadow_why is None)
+check("...nor a filter state (0.9.16)", rd.filter is None)
+
+# ---- 0.9.16 (F13): looks by the game's "Default Ratio (Filter Applied)" state, an optional "filter" in the body
+fresh()
+clock[0] = float(calendar.timegm((2026, 10, 25, 12, 0, 0)))
+log = new_log()
+log.snapshot("0.9.16-beta", "Windows 10.0.26200", [(2560, 1440, 100)], "screen", "ok")
+log.look("read")
+body = log.body("2026-10-25", HID)
+check("F13: no 'filter' in the body while no look knew the filter state (a 0.9.15 shape)", body is not None and "filter" not in body)
+for state in ("on", "on", "off", "unknown", "no_effect", None, "maybe"):
+    log.look("read", filter_state=state)
+body = log.body("2026-10-25", HID)
+check("F13: looks counted by filter state; None and anything else not counted",
+      body is not None and body["filter"] == {"on": 2, "off": 1, "unknown": 1, "no_effect": 1} and body["looks"] == 8)
+check("...the body passes the site's rules", healthlog.bad_field(body, "2026-10-25") is None)
+log.save()
+again = new_log().body("2026-10-25", HID)
+check("...and the counts survive a restart (saved and read back)", again is not None and again["filter"] == body["filter"])
+for k in ("on", "off", "unknown", "no_effect"):
+    check(f"F13: the site's rule refuses a 'filter' with '{k}' above the looks",
+          healthlog.bad_field({**body, "filter": {**body["filter"], k: body["looks"] + 1}}, "2026-10-25") == "filter")
+check("F13: ...a missing key", healthlog.bad_field({**body, "filter": {"on": 1, "off": 1, "unknown": 1}}, "2026-10-25") == "filter")
+check("F13: ...an extra key", healthlog.bad_field({**body, "filter": {**body["filter"], "ideal": 0}}, "2026-10-25") == "filter")
+check("F13: ...not a count", healthlog.bad_field({**body, "filter": {**body["filter"], "on": 1.5}}, "2026-10-25") == "filter")
+check("F13: ...not an object", healthlog.bad_field({**body, "filter": "on"}, "2026-10-25") == "filter")
+check("F13: the contract's 0.9.16 cases are in the file (the server tests the same ones)",
+      sum(c["name"].startswith("0.9.16:") for c in contract["health_valid"]) >= 2
+      and sum(c["field"] == "filter" for c in contract["health_invalid"]) >= 4)
 
 print("\nALL PASSED" if not failures else f"\n{failures} FAILED")
 sys.exit(1 if failures else 0)

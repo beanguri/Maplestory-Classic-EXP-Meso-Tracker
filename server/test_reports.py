@@ -83,7 +83,7 @@ def with_change(base, change):
     return body
 
 
-OLD_SHAPES = [c for c in CONTRACT["health_valid"] if not c["name"].startswith("v2:")]    # 0.9.13's examples, kept in the file
+OLD_SHAPES = [c for c in CONTRACT["health_valid"] if not c["name"].startswith(("v2:", "0.9.16:"))]    # 0.9.13's examples, kept in the file
 health_full = CONTRACT["health_valid"][0]["body"]
 report_ok = CONTRACT["report_valid"][0]["body"]
 
@@ -128,6 +128,14 @@ before = everything()
 status, a = post("/api/health", dict(health_full, id="BAD", ui=CONTRACT["health_valid"][3]["body"]["ui"]), ip=fresh())
 check("deploy check: new server names the bad id, not ui", status == 400 and a.get("error") == "id")
 check("...and stores nothing", everything() == before)
+# The same for 0.9.16's "filter" (F13): an old server names "filter", this one "id".
+status, a = post("/api/health", {"filter": {}}, ip=fresh())
+check("deploy check 0.9.16: {\"filter\": {}} names id, not filter", status == 400 and a.get("error") == "id")
+check("...and stores nothing", everything() == before)
+f16 = next(dict(c["body"], id="%016x" % (0xa00 + i)) for i, c in enumerate(CONTRACT["health_valid"])
+           if c["name"].startswith("0.9.16: filter (with"))
+check("a 0.9.16 body is stored whole (filter kept)", json.loads(sql(
+    "SELECT body FROM health_reports WHERE id = '%s'" % f16["id"])[0]["body"]) == f16)
 check("the stored body is the one sent", json.loads(sql(
     "SELECT body FROM health_reports WHERE id = '0123456789abcdef'")[0]["body"]) == health_full)
 for hid, v in (("f222222222222213", "0.9.13-beta"), ("f222222222222200", "0.9.0-beta")):
