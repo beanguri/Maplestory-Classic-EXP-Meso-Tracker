@@ -2656,7 +2656,14 @@ class ScreenReader:
         for the next one (where the list was, and a party count held while the list is covered or just gone). A held
         count goes to the shadow as unclear: v3 didn't read it this look, so it is never counted as agreeing or not."""
         hint = ui_layout.mode_from_gh(self.gh, wh) if self.gh else None
-        look = self._party_last = self._party_look = party_v3.read_party_v3(img, hint, self._party_last, hsv, self.filtered)
+        look = party_v3.read_party_v3(img, hint, self._party_last, hsv, self.filtered)
+        if self.filter_state == filter_ui.UNKNOWN and look.why == "ok" and look.count == 1:
+            # (the filter isn't known yet: a list drawn filtered reads as "no list" the Default way, which is alone. Look the
+            # filtered way too: a list found there is not alone, and not read either. F12)
+            again = party_v3.read_party_v3(img, hint, None, hsv, True)
+            if again.why == "unclear" or (again.count or 0) >= 2:
+                look = party_v3.PartyLook(None, "unclear", again.scale, again.box, 0)
+        self._party_last = self._party_look = look
         return (None, "unclear") if look.why == "held" else (look.count, look.why)
 
     @staticmethod
